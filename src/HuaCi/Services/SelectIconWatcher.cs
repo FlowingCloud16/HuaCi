@@ -12,7 +12,9 @@ namespace HuaCi.Services;
 /// - 按下时鼠标在标题栏、边框、滚动条等非客户区（WM_NCHITTEST ≠ HTCLIENT）；
 /// - 拖动过程中窗口被移动或缩放；
 /// - 桌面、任务栏、本程序自己的窗口；
-/// - 按下时是普通箭头 / 手形 / 缩放光标（文本区域通常是 I 形光标）。
+/// - 拖动：按下时是普通箭头 / 手形 / 缩放光标（文本区域通常是 I 形光标）；
+/// - 双击：必须是 I 形光标（避免双击打开文件夹 / 文件时误触发）；
+/// - 列表 / 树形 / 工具栏等控件（文件列表、资源管理器项目视图），以及资源管理器中除输入框外的区域。
 /// 按钮在点击别处、按键、滚轮、切换窗口或超时后自动消失。
 /// </summary>
 public sealed class SelectIconWatcher : IDisposable
@@ -28,6 +30,20 @@ public sealed class SelectIconWatcher : IDisposable
         "Windows.UI.Core.CoreWindow",                           // 开始菜单 / 搜索等系统界面
         "XamlExplorerHostIslandWindow",                         // Alt+Tab / 任务视图
         "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS",  // 终端：Ctrl+C 是中断
+    };
+
+    /// <summary>鼠标下的控件属于这些类时不显示（文件列表、树、表头、工具栏、状态栏…）。</summary>
+    private static readonly HashSet<string> IgnoredControlClasses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SysListView32", "SysTreeView32", "DirectUIHWND", "SysHeader32", "ToolbarWindow32",
+        "msctls_statusbar32", "ReBarWindow32", "SHELLDLL_DefView", "NamespaceTreeControl",
+        "Breadcrumb Parent", "UIRibbonWorkPane", "NetUIHWND",
+    };
+
+    /// <summary>资源管理器 / 文件对话框的窗口类：只在其中的文本输入框里允许显示。</summary>
+    private static readonly HashSet<string> ExplorerRootClasses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CabinetWClass", "ExploreWClass", "#32770",
     };
 
     private static readonly int[] NonTextCursors =
@@ -46,6 +62,8 @@ public sealed class SelectIconWatcher : IDisposable
     private IntPtr _downRoot;
     private RECT _downRect;
     private bool _downCursorIsText;
+    private bool _downCursorIsIBeam;
+    private readonly IntPtr _ibeamCursor = StandardCursor(IDC_IBEAM);
     private bool _downOnIcon;
 
     private POINT _lastUpPt;
@@ -102,6 +120,7 @@ public sealed class SelectIconWatcher : IDisposable
                 GetWindowRect(_downRoot, out _downRect);
                 var cur = CurrentCursor();
                 _downCursorIsText = cur == IntPtr.Zero || !_nonTextCursorHandles.Contains(cur);
+                _downCursorIsIBeam = cur != IntPtr.Zero && cur == _ibeamCursor;
                 if (_icon.IsVisible) _dispatcher.BeginInvoke(HideIcon);
                 break;
 
@@ -117,13 +136,13 @@ public sealed class SelectIconWatcher : IDisposable
                 _lastUpPt = up;
                 _lastUpTime = isDoubleClick ? 0 : time; // 避免三击被当成两次双击
 
-                // 拖动要求按下时是文本类光标；双击选词时光标通常也是 I 形，但不强制
-                if ((isDrag && _downCursorIsText) || isDoubleClick)
+                // 拖动要求按下时是文本类光标；双击必须是 I 形光标（双击打开文件夹时是箭头）
+                if ((isDrag && _downCursorIsText) || (isDoubleClick && _downCursorIsIBeam))
                 {
                     var root = _downRoot;
                     var rect = _downRect;
                     var downPt = _downPt;
-                    _dispatcher.BeginInvoke(DispatcherPriority.Background, () => MaybeShow(up, downPt, root, rect));
+                    _dispatcher.BeginInvoke(DispatcherPriority.Background, () => _ = MaybeShowAsync(up, downPt, root, rect));
                 }
                 break;
 
@@ -136,30 +155,93 @@ public sealed class SelectIconWatcher : IDisposable
     }
 
     /// <summary>在 UI 线程上做较"重"的检查（可能跨进程发消息），然后决定是否显示。</summary>
-    private void MaybeShow(POINT up, POINT downPt, IntPtr root, RECT downRect)
+    private async Task MaybeShowAsync(POINT up, POINT downPt, IntPtr root, RECT downRect)
     {
-        if (root == IntPtr.Zero || ScreenHelper.IsForegroundOurs()) return;
+        try
+        {
+            if (root == IntPtr.Zero || ScreenHelper.IsForegroundOurs()) return;
 
-        // 拖动期间窗口被移动 / 缩放 → 是在拖窗口，不是选文字
-        if (GetWindowRect(root, out var nowRect) &&
-            (nowRect.Left != downRect.Left || nowRect.Top != downRect.Top ||
-             nowRect.Width != downRect.Width || nowRect.Height != downRect.Height))
-            return;
+            // 拖动期间窗口被移动 / 缩放 → 是在拖窗口，不是选文字
+            if (GetWindowRect(root, out var nowRect) &&
+                (nowRect.Left != downRect.Left || nowRect.Top != downRect.Top ||
+                 nowRect.Width != downRect.Width || nowRect.Height != downRect.Height))
+                return;
 
-        if (IgnoredClasses.Contains(ClassNameOf(root))) return;
+            var rootClass = ClassNameOf(root);
+            if (IgnoredClasses.Contains(rootClass)) return;
 
-        // 按下位置不在客户区（标题栏、边框、滚动条、菜单…）
-        var target = WindowFromPoint(downPt);
-        if (target != IntPtr.Zero &&
-            SendMessageTimeout(target, WM_NCHITTEST, IntPtr.Zero, MakeLParam(downPt.X, downPt.Y),
-                SMTO_ABORTIFHUNG, 100, out var hit) != IntPtr.Zero &&
-            hit.ToInt64() != HTCLIENT && hit.ToInt64() != -1 /* HTTRANSPARENT */)
-            return;
+            var target = WindowFromPoint(downPt);
+            var targetClass = target != IntPtr.Zero ? ClassNameOf(target) : "";
+            if (IgnoredControlClasses.Contains(targetClass)) return;
 
-        _iconForeground = GetForegroundWindow();
-        _icon.ShowAt(up);
-        _keyboard.Install();
-        _foregroundWatch.Start();
+            // 资源管理器 / 文件对话框：只允许在文本输入框（地址栏编辑状态、搜索框、重命名框）中显示
+            if (ExplorerRootClasses.Contains(rootClass) || IsExplorerProcess(root))
+            {
+                bool isEditClass = targetClass.Equals("Edit", StringComparison.OrdinalIgnoreCase)
+                                   || targetClass.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase);
+                if (!isEditClass && !await IsTextElementAtAsync(downPt)) return;
+            }
+
+            // 按下位置不在客户区（标题栏、边框、滚动条、菜单…）
+            if (target != IntPtr.Zero &&
+                SendMessageTimeout(target, WM_NCHITTEST, IntPtr.Zero, MakeLParam(downPt.X, downPt.Y),
+                    SMTO_ABORTIFHUNG, 100, out var hit) != IntPtr.Zero &&
+                hit.ToInt64() != HTCLIENT && hit.ToInt64() != -1 /* HTTRANSPARENT */)
+                return;
+
+            // 等待期间用户可能已经点了别处
+            if (GetForegroundWindow() != root && GetAncestor(GetForegroundWindow(), GA_ROOT) != root) return;
+
+            _iconForeground = GetForegroundWindow();
+            _icon.ShowAt(up);
+            _keyboard.Install();
+            _foregroundWatch.Start();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("划词检测出错：" + ex.Message);
+        }
+    }
+
+    private static bool IsExplorerProcess(IntPtr hwnd)
+    {
+        try
+        {
+            GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == 0) return false;
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            return p.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 用 UI Automation 判断某点下的元素是否是文本输入 / 文档（Edit、Document 或支持 TextPattern）。
+    /// 只用于资源管理器这类容易误判的窗口；放在后台线程并限时 300ms，超时视为否。
+    /// </summary>
+    private static async Task<bool> IsTextElementAtAsync(POINT pt)
+    {
+        var task = Task.Run(() =>
+        {
+            try
+            {
+                var el = System.Windows.Automation.AutomationElement.FromPoint(new System.Windows.Point(pt.X, pt.Y));
+                if (el is null) return false;
+                var type = el.Current.ControlType;
+                if (type == System.Windows.Automation.ControlType.Edit || type == System.Windows.Automation.ControlType.Document)
+                    return true;
+                return el.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out _);
+            }
+            catch
+            {
+                return false;
+            }
+        });
+        var done = await Task.WhenAny(task, Task.Delay(300));
+        return done == task && task.Result;
     }
 
     public void HideIcon()

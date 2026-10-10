@@ -15,7 +15,7 @@
     <AssemblyName>HuaCi</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Product>划词翻译 HuaCi</Product>
     <Description>Windows 划词翻译工具（DeepSeek 引擎）</Description>
     <Copyright>FlowingCloud16</Copyright>

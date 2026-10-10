@@ -70,6 +70,15 @@ public sealed class TranslationController : IDisposable
         if (!reusePinned) p.ShowBeside(region);
     }
 
+    /// <summary>在鼠标旁用弹窗显示一条错误（替代系统 MessageBox）。</summary>
+    public void ShowProblemAtCursor(string message, string title = "截图翻译")
+    {
+        _cts?.Cancel();
+        var p = GetPopup(out bool reusePinned);
+        p.ShowMessage(message, title, selectable: true);
+        if (!reusePinned) p.ShowNear(ScreenHelper.GetCursorPos());
+    }
+
     private void TranslateCore(string text, Action<TranslationPopup> place, TranslationPopup? reuse, bool fromOcr)
     {
         text = text.Trim();

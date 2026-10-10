@@ -20,19 +20,63 @@ public sealed class ScreenSnapshot : IDisposable
     public static ScreenSnapshot CaptureAll()
     {
         var shots = new List<MonitorShot>();
-        foreach (var m in ScreenHelper.GetMonitors())
+        try
         {
-            var r = m.Bounds;
+            foreach (var m in ScreenHelper.GetMonitors())
+            {
+                var r = m.Bounds;
+                if (r.Width <= 0 || r.Height <= 0) continue;
+                shots.Add(new MonitorShot(m, CaptureRect(r)));
+            }
+        }
+        catch
+        {
+            foreach (var s in shots) s.Bitmap.Dispose();
+            throw;
+        }
+        if (shots.Count == 0) throw new InvalidOperationException("没有找到可截取的显示器。");
+        return new ScreenSnapshot(shots);
+    }
+
+    /// <summary>
+    /// 用 GDI BitBlt 截取屏幕矩形（物理像素）。使用 SRCCOPY | CAPTUREBLT 以包含分层窗口；
+    /// System.Drawing 的 CopyFromScreen 会校验枚举并拒绝 CAPTUREBLT，所以这里直接 P/Invoke。
+    /// </summary>
+    private static Bitmap CaptureRect(NativeMethods.RECT r)
+    {
+        IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, hBitmap = IntPtr.Zero, old = IntPtr.Zero;
+        try
+        {
+            screenDc = NativeMethods.GetDC(IntPtr.Zero); // 整个虚拟屏幕
+            if (screenDc == IntPtr.Zero) throw new InvalidOperationException("无法获取屏幕设备上下文。");
+            memDc = NativeMethods.CreateCompatibleDC(screenDc);
+            hBitmap = NativeMethods.CreateCompatibleBitmap(screenDc, r.Width, r.Height);
+            if (memDc == IntPtr.Zero || hBitmap == IntPtr.Zero)
+                throw new InvalidOperationException($"创建截图缓冲区失败（{r.Width}×{r.Height}）。");
+            old = NativeMethods.SelectObject(memDc, hBitmap);
+            if (!NativeMethods.BitBlt(memDc, 0, 0, r.Width, r.Height, screenDc, r.Left, r.Top,
+                    NativeMethods.SRCCOPY | NativeMethods.CAPTUREBLT))
+                throw new InvalidOperationException($"截屏失败（BitBlt 错误码 {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}）。");
+            NativeMethods.SelectObject(memDc, old);
+            old = IntPtr.Zero;
+
+            // FromHbitmap 得到的是 32bppRgb 副本，再统一转成 32bppArgb，后续处理只需考虑一种格式
+            using var tmp = Image.FromHbitmap(hBitmap);
             var bmp = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
             {
-                // CaptureBlt：同时截取分层窗口（例如其他程序的半透明窗口）
-                g.CopyFromScreen(r.Left, r.Top, 0, 0, new System.Drawing.Size(r.Width, r.Height),
-                    CopyPixelOperation.SourceCopy | CopyPixelOperation.CaptureBlt);
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                g.DrawImage(tmp, new Rectangle(0, 0, r.Width, r.Height), new Rectangle(0, 0, r.Width, r.Height), GraphicsUnit.Pixel);
             }
-            shots.Add(new MonitorShot(m, bmp));
+            return bmp;
         }
-        return new ScreenSnapshot(shots);
+        finally
+        {
+            if (old != IntPtr.Zero) NativeMethods.SelectObject(memDc, old);
+            if (hBitmap != IntPtr.Zero) NativeMethods.DeleteObject(hBitmap);
+            if (memDc != IntPtr.Zero) NativeMethods.DeleteDC(memDc);
+            if (screenDc != IntPtr.Zero) NativeMethods.ReleaseDC(IntPtr.Zero, screenDc);
+        }
     }
 
     /// <summary>从冻结的截图中裁剪任意区域（可跨显示器）。</summary>

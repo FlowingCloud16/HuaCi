@@ -23,6 +23,7 @@ public sealed class ScreenshotController
         if (_busy) return;
         _busy = true;
         ScreenSnapshot? snapshot = null;
+        NativeMethods.RECT? selected = null;
         try
         {
             // 关闭本程序的弹窗 / 划词按钮，等它们从屏幕上消失后再截图
@@ -32,6 +33,7 @@ public sealed class ScreenshotController
             snapshot = ScreenSnapshot.CaptureAll();
             var region = await new ScreenshotSelector().SelectAsync(snapshot);
             if (region is not { } r) return;
+            selected = r;
 
             using var image = snapshot.Crop(r);
             snapshot.Dispose();
@@ -67,7 +69,18 @@ public sealed class ScreenshotController
         catch (Exception ex)
         {
             Log.Error("截图翻译失败", ex);
-            MessageBox.Show("截图翻译失败：" + ex.Message, "划词翻译", MessageBoxButton.OK, MessageBoxImage.Warning);
+            var msg = "截图翻译失败：" + ex.Message + "\n详细信息已写入日志：%AppData%\\HuaCi\\log.txt";
+            try
+            {
+                if (selected is { } r) _translator.ShowOcrProblem(r, msg);
+                else _translator.ShowProblemAtCursor(msg);
+            }
+            catch (Exception inner)
+            {
+                // 弹窗本身也失败时才退回系统对话框
+                Log.Error("显示错误弹窗失败", inner);
+                MessageBox.Show(msg, "划词翻译", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         finally
         {

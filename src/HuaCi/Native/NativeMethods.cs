@@ -214,6 +214,7 @@ public static partial class NativeMethods
     public const int WM_SYSKEYDOWN = 0x0104;
 
     public const int IDC_ARROW = 32512;
+    public const int IDC_IBEAM = 32513;
     public const int IDC_HAND = 32649;
     public const int IDC_SIZEALL = 32646;
     public const int IDC_SIZENWSE = 32642;
@@ -265,6 +266,37 @@ public static partial class NativeMethods
     }
 
     public static IntPtr MakeLParam(int x, int y) => new((y << 16) | (x & 0xFFFF));
+
+    // ---------- GDI 截屏 ----------
+    public const int SRCCOPY = 0x00CC0020;
+    public const int CAPTUREBLT = 0x40000000;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int cx, int cy);
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool BitBlt(IntPtr hdc, int x, int y, int cx, int cy, IntPtr hdcSrc, int x1, int y1, int rop);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteObject(IntPtr ho);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteDC(IntPtr hdc);
 
     // ---------- 显示器枚举 ----------
     public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
