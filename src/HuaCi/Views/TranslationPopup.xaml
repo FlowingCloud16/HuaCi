@@ -86,6 +86,8 @@
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                         <Button x:Name="RetryButton" Style="{StaticResource LinkButton}" Content="重试" Click="RetryButton_Click"/>
                         <Button x:Name="SettingsButton" Style="{StaticResource LinkButton}" Content="打开设置" Click="SettingsButton_Click"/>
+                        <Button x:Name="FallbackButton" Style="{StaticResource LinkButton}" Content="改用 Windows OCR" Click="FallbackButton_Click"
+                                Visibility="Collapsed"/>
                     </StackPanel>
                 </StackPanel>
             </Grid>

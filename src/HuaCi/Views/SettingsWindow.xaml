@@ -166,12 +166,35 @@
                 <ColumnDefinition Width="90"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Style="{StaticResource Label}" Text="OCR 语言"/>
-            <ComboBox x:Name="OcrLanguageBox" Grid.Column="1" Height="28"/>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="8"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="8"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Style="{StaticResource Label}" Text="识别方式"/>
+            <ComboBox x:Name="EngineBox" Grid.Column="1" Height="28" SelectionChanged="EngineBox_SelectionChanged">
+                <ComboBoxItem Content="DeepSeek 识图（推荐，更准确）" Tag="deepseek"/>
+                <ComboBoxItem Content="Windows 本地 OCR（免费、离线，准确度较低）" Tag="ocr"/>
+            </ComboBox>
+
+            <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="识图模型"/>
+            <ComboBox x:Name="VisionModelBox" Grid.Row="2" Grid.Column="1" IsEditable="True" Height="28"
+                      ToolTip="留空 = 自动：主模型支持图片就用主模型，否则用接口返回的第一个支持图片的模型"/>
+            <StackPanel Grid.Row="3" Grid.Column="1" Margin="0,4,0,0">
+                <TextBlock x:Name="VisionModelStatus" FontSize="12" Foreground="{StaticResource SubtleBrush}" TextWrapping="Wrap"
+                           Text="留空为自动选择。图片会发送到 DeepSeek，按图片 token 计费（每张最多约 1024 token）。"/>
+                <CheckBox x:Name="ShowSourceCheck" Margin="0,4,0,0" Content="同时显示识别出的原文（可修改后重新翻译，会稍微增加耗时和费用）"/>
+            </StackPanel>
+
+            <TextBlock Grid.Row="5" Style="{StaticResource Label}" Text="OCR 语言"/>
+            <ComboBox x:Name="OcrLanguageBox" Grid.Row="5" Grid.Column="1" Height="28"/>
         </Grid>
         <TextBox x:Name="OcrStatus" Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
                  TextWrapping="Wrap" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                 Text="使用 Windows 自带的文字识别，在本机完成，不上传图片。"/>
+                 Text="Windows 本地 OCR 在本机完成，不上传图片；DeepSeek 识图失败时也可以在弹窗中一键改用本地 OCR。"/>
 
         <!-- 常规 -->
         <TextBlock Style="{StaticResource Section}" Text="常规"/>

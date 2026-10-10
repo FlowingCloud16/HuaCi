@@ -41,6 +41,15 @@ public sealed class AppSettings
 
     public string ScreenshotHotkey { get; set; } = DefaultScreenshotHotkey;
 
+    /// <summary>截图识别方式："deepseek"（DeepSeek 识图，默认）或 "ocr"（Windows 本地 OCR）。</summary>
+    public string ScreenshotEngine { get; set; } = ScreenshotEngines.DeepSeek;
+
+    /// <summary>识图模型。留空 = 自动（主模型支持图片则用主模型，否则用 /models 中第一个支持图片的模型）。</summary>
+    public string VisionModel { get; set; } = "";
+
+    /// <summary>识图翻译时是否同时让模型输出识别出的原文（显示在弹窗中，可编辑重译）。</summary>
+    public bool ShowRecognizedSource { get; set; } = true;
+
     /// <summary>OCR 语言标签（如 zh-Hans-CN、en-US）。留空 = 自动。</summary>
     public string OcrLanguage { get; set; } = "";
 
@@ -64,4 +73,10 @@ public sealed class AppSettings
     }
 
     public AppSettings Clone() => (AppSettings)MemberwiseClone();
+}
+
+public static class ScreenshotEngines
+{
+    public const string DeepSeek = "deepseek";
+    public const string WindowsOcr = "ocr";
 }

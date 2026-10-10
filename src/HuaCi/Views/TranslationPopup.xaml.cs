@@ -51,6 +51,8 @@ public partial class TranslationPopup : Window
 
     public void Reset(string source, TranslationRequest req, string model, bool expandSource, bool fromOcr = false)
     {
+        CustomRetry = null;
+        FallbackAction = null;
         SourceKindText.Text = fromOcr ? "识别结果（可修改后重新翻译）" : "原文（可修改后重新翻译）";
         var lang = req.SourceIsChinese ? "中文" : "自动检测";
         if (req.AlreadyInTarget) lang = "中文";
@@ -70,6 +72,8 @@ public partial class TranslationPopup : Window
         _thinkingChars = 0;
         CopyButton.IsEnabled = false;
     }
+
+    public void SetFooter(string text) => FooterText.Text = text;
 
     public void SetModel(string model) =>
         FooterText.Text = string.IsNullOrWhiteSpace(model) ? "DeepSeek" : $"DeepSeek · {model}";
@@ -121,6 +125,41 @@ public partial class TranslationPopup : Window
         ErrorText.Text = message;
         SettingsButton.Visibility = needsSettings ? Visibility.Visible : Visibility.Collapsed;
         RetryButton.Visibility = needsSettings ? Visibility.Collapsed : Visibility.Visible;
+        FallbackButton.Visibility = FallbackAction is not null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>重试时执行的自定义操作（例如识图翻译重新发送图片）；为 null 时按原文重新翻译。</summary>
+    public Action? CustomRetry { get; set; }
+
+    /// <summary>识图失败时可用的"改用 Windows OCR"操作。</summary>
+    public Action? FallbackAction { get; set; }
+
+    /// <summary>准备显示识图翻译结果。</summary>
+    public void ResetForVision(string targetDescription, string model, bool showSource)
+    {
+        DirectionText.Text = $"截图 → {targetDescription}";
+        SourceExpander.Visibility = showSource ? Visibility.Visible : Visibility.Collapsed;
+        SourceExpander.IsExpanded = false;
+        SourceBox.Text = "";
+        SourceHeader.Text = "识别出的原文：等待中…";
+        SourceKindText.Text = "识别结果（可修改后重新翻译）";
+        FooterText.Text = $"DeepSeek 识图 · {model}";
+        ResultBox.Text = "";
+        ResultBox.Visibility = Visibility.Collapsed;
+        ErrorPanel.Visibility = Visibility.Collapsed;
+        LoadingText.Visibility = Visibility.Visible;
+        LoadingText.Text = "正在识别图片并翻译…";
+        _thinkingChars = 0;
+        CopyButton.IsEnabled = false;
+    }
+
+    /// <summary>流式更新识别出的原文。</summary>
+    public void SetRecognizedSource(string text)
+    {
+        var t = text.Trim();
+        SourceBox.Text = t;
+        var firstLine = t.Split('\n')[0].Trim();
+        SourceHeader.Text = "识别：" + (firstLine.Length > 40 ? firstLine[..40] + "…" : firstLine);
     }
 
     /// <summary>仅显示一条提示（例如没有选中文字）。</summary>
@@ -327,7 +366,13 @@ public partial class TranslationPopup : Window
         if (text.Length > 0) RetranslateRequested?.Invoke(this, text);
     }
 
-    private void RetryButton_Click(object sender, RoutedEventArgs e) => RetryRequested?.Invoke(this, EventArgs.Empty);
+    private void RetryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (CustomRetry is { } retry) retry();
+        else RetryRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void FallbackButton_Click(object sender, RoutedEventArgs e) => FallbackAction?.Invoke();
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {

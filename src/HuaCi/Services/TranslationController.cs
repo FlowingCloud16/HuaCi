@@ -58,14 +58,120 @@ public sealed class TranslationController : IDisposable
         TranslateCore(text, p => p.ShowNear(anchor), reuse, fromOcr: false);
 
     /// <summary>截图翻译：弹窗显示在选区旁边，原文默认展开以便修正识别错误。</summary>
-    public void TranslateOcr(string text, NativeMethods.RECT region) =>
-        TranslateCore(text, p => p.ShowBeside(region), null, fromOcr: true);
+    public void TranslateOcr(string text, NativeMethods.RECT region, TranslationPopup? reuse = null) =>
+        TranslateCore(text, p => p.ShowBeside(region), reuse, fromOcr: true);
 
-    /// <summary>截图翻译失败（无 OCR 语言、未识别到文字等）时在选区旁显示提示。</summary>
-    public void ShowOcrProblem(NativeMethods.RECT region, string message)
+    /// <summary>
+    /// DeepSeek 识图翻译：把截图发给支持图片输入的模型，一次请求完成识别和翻译。
+    /// fallback 不为 null 时，出错后弹窗会提供"改用 Windows OCR"。
+    /// </summary>
+    public void TranslateImage(System.Drawing.Bitmap image, NativeMethods.RECT region,
+        Action<TranslationPopup>? fallback, TranslationPopup? reuse = null)
     {
         _cts?.Cancel();
-        var p = GetPopup(out bool reusePinned);
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        var settings = _settings.Current;
+
+        TranslationPopup popup;
+        bool inPlace;
+        if (reuse is { IsClosed: false } && ReferenceEquals(reuse, _popup)) { popup = reuse; inPlace = true; }
+        else popup = GetPopup(out inPlace);
+
+        popup.ResetForVision(VisionTranslator.DescribeTarget(settings),
+            string.IsNullOrWhiteSpace(settings.VisionModel) ? "自动选择模型" : settings.VisionModel, settings.ShowRecognizedSource);
+        popup.CustomRetry = () => TranslateImage(image, region, fallback, popup);
+        popup.FallbackAction = fallback is null ? null : () => fallback(popup);
+        if (!inPlace) popup.ShowBeside(region);
+
+        _ = RunVisionAsync(popup, image, settings, ct);
+    }
+
+    private async Task RunVisionAsync(TranslationPopup popup, System.Drawing.Bitmap image, AppSettings settings, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(settings.VisionModel))
+                settings = await EnsureModelAsync(settings, ct);
+
+            var (bytes, mime) = await Task.Run(() => { lock (image) return VisionTranslator.PrepareImage(image); }, ct);
+            var model = await VisionTranslator.ResolveModelAsync(_client, settings, ct);
+            if (ct.IsCancellationRequested || popup.IsClosed) return;
+            popup.SetFooter($"DeepSeek 识图 · {model}");
+            Log.Info($"识图翻译：模型 {model}，图片 {bytes.Length / 1024} KB（{mime}）");
+
+            var (system, user) = VisionTranslator.BuildPrompts(settings, settings.ShowRecognizedSource);
+            var splitter = new VisionTranslator.OutputSplitter();
+            var head = new System.Text.StringBuilder();
+            bool headDone = false, noText = false, anyResult = false;
+
+            void Emit(string piece, bool final)
+            {
+                if (piece.Length == 0 && !final) return;
+                if (!headDone)
+                {
+                    // 先缓冲开头，判断是不是 [NO_TEXT]，避免它闪现在译文里
+                    head.Append(piece);
+                    var h = head.ToString().TrimStart();
+                    if (!final && h.Length < VisionTranslator.NoTextMarker.Length && VisionTranslator.NoTextMarker.StartsWith(h, StringComparison.Ordinal))
+                        return;
+                    headDone = true;
+                    if (h.StartsWith(VisionTranslator.NoTextMarker, StringComparison.Ordinal)) { noText = true; return; }
+                    piece = head.ToString();
+                }
+                if (noText || piece.Length == 0) return;
+                anyResult = true;
+                popup.AppendResult(piece);
+            }
+
+            await foreach (var chunk in _client.VisionStreamAsync(bytes, mime, system, user, model, settings, ct))
+            {
+                if (ct.IsCancellationRequested || popup.IsClosed) return;
+                if (chunk.IsReasoning) { popup.ShowThinking(chunk.Text.Length); continue; }
+                var (translation, sourceChanged) = splitter.Push(chunk.Text);
+                Emit(translation, false);
+                if (sourceChanged && !noText) popup.SetRecognizedSource(splitter.Source);
+            }
+            if (ct.IsCancellationRequested || popup.IsClosed) return;
+            Emit(splitter.Flush(), true);
+
+            if (noText)
+            {
+                popup.ShowNotice("没有在截图中识别到文字。可以把选区框得更贴近文字后重试。");
+                return;
+            }
+            if (!anyResult)
+            {
+                popup.ShowError("模型没有返回译文，请重试。", false);
+                return;
+            }
+            popup.MarkDone();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (TranslationException ex)
+        {
+            if (!ct.IsCancellationRequested && !popup.IsClosed) popup.ShowError(ex.Message, ex.NeedsSettings);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("识图翻译失败", ex);
+            if (!ct.IsCancellationRequested && !popup.IsClosed) popup.ShowError("识图翻译失败：" + ex.Message, false);
+        }
+    }
+
+    /// <summary>截图翻译失败（无 OCR 语言、未识别到文字等）时在选区旁显示提示。</summary>
+    public void ShowOcrProblem(NativeMethods.RECT region, string message, TranslationPopup? reuse = null)
+    {
+        _cts?.Cancel();
+        bool reusePinned;
+        TranslationPopup p;
+        if (reuse is { IsClosed: false } && ReferenceEquals(reuse, _popup)) { p = reuse; reusePinned = true; }
+        else p = GetPopup(out reusePinned);
+        p.CustomRetry = null;
+        p.FallbackAction = null;
         p.ShowMessage(message, "截图翻译", selectable: true);
         if (!reusePinned) p.ShowBeside(region);
     }

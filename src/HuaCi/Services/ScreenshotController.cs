@@ -18,6 +18,39 @@ public sealed class ScreenshotController
         _beforeCapture = beforeCapture;
     }
 
+    /// <summary>Windows 本地 OCR → DeepSeek 文字翻译。reuse 不为 null 时在该弹窗中显示（识图失败后的回退）。</summary>
+    private async Task RunOcrAsync(System.Drawing.Bitmap image, NativeMethods.RECT r, Views.TranslationPopup? reuse)
+    {
+        OcrOutcome outcome;
+        try
+        {
+            System.Drawing.Bitmap copy;
+            lock (image) copy = (System.Drawing.Bitmap)image.Clone();
+            using (copy) outcome = await OcrService.RecognizeAsync(copy, _settings.Current.OcrLanguage);
+        }
+        catch (TranslationException ex)
+        {
+            _translator.ShowOcrProblem(r, ex.Message, reuse);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("OCR 失败", ex);
+            _translator.ShowOcrProblem(r, "文字识别失败：" + ex.Message +
+                "\n截图翻译需要 Windows 10 1903 或更高版本。", reuse);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(outcome.Text))
+        {
+            _translator.ShowOcrProblem(r, $"没有在选区中识别到文字（OCR 语言：{outcome.LanguageTag}）。\n" +
+                "可以把选区框得更贴近文字，或在“设置 → 截图翻译”中指定 OCR 语言。", reuse);
+            return;
+        }
+
+        _translator.TranslateOcr(outcome.Text, r, reuse);
+    }
+
     public async Task StartAsync()
     {
         if (_busy) return;
@@ -35,36 +68,19 @@ public sealed class ScreenshotController
             if (region is not { } r) return;
             selected = r;
 
-            using var image = snapshot.Crop(r);
+            var image = snapshot.Crop(r);
             snapshot.Dispose();
             snapshot = null;
 
-            OcrOutcome outcome;
-            try
+            if (_settings.Current.ScreenshotEngine == ScreenshotEngines.WindowsOcr)
             {
-                outcome = await OcrService.RecognizeAsync(image, _settings.Current.OcrLanguage);
+                using (image) await RunOcrAsync(image, r, null);
             }
-            catch (TranslationException ex)
+            else
             {
-                _translator.ShowOcrProblem(r, ex.Message);
-                return;
+                // DeepSeek 识图（默认）；出错时弹窗提供"改用 Windows OCR"
+                _translator.TranslateImage(image, r, popup => _ = RunOcrAsync(image, r, popup));
             }
-            catch (Exception ex)
-            {
-                Log.Error("OCR 失败", ex);
-                _translator.ShowOcrProblem(r, "文字识别失败：" + ex.Message +
-                    "\n截图翻译需要 Windows 10 1903 或更高版本。");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(outcome.Text))
-            {
-                _translator.ShowOcrProblem(r, $"没有在选区中识别到文字（OCR 语言：{outcome.LanguageTag}）。\n" +
-                    "可以把选区框得更贴近文字，或在“设置 → 截图翻译”中指定 OCR 语言。");
-                return;
-            }
-
-            _translator.TranslateOcr(outcome.Text, r);
         }
         catch (Exception ex)
         {

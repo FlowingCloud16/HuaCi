@@ -13,8 +13,11 @@ namespace HuaCi.Services;
 public readonly record struct StreamChunk(string Text, bool IsReasoning);
 
 /// <summary>GET /models 返回的模型。</summary>
-public sealed record ModelInfo(string Id, string? Name)
+public sealed record ModelInfo(string Id, string? Name, IReadOnlyList<string>? InputModalities = null)
 {
+    /// <summary>接口是否声明了支持图片输入（input_modalities 含 image）。未声明时为 null。</summary>
+    public bool? SupportsImages => InputModalities is null ? null : InputModalities.Contains("image", StringComparer.OrdinalIgnoreCase);
+
     public override string ToString() => Id;
 }
 
@@ -33,7 +36,7 @@ public sealed class DeepSeekClient : IDisposable
         };
         // 流式响应总时长由调用方的 CancellationToken 控制
         _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.3");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.4");
     }
 
     /// <summary>规范化 Base URL：去掉末尾的 / 和 /chat/completions。</summary>
@@ -95,7 +98,13 @@ public sealed class DeepSeekClient : IDisposable
                     foreach (var m in data.EnumerateArray())
                     {
                         if (m.TryGetProperty("id", out var id) && id.GetString() is { Length: > 0 } sid)
-                            list.Add(new ModelInfo(sid, m.TryGetProperty("name", out var n) ? n.GetString() : null));
+                        {
+                            List<string>? modalities = null;
+                            if (m.TryGetProperty("input_modalities", out var im) && im.ValueKind == JsonValueKind.Array)
+                                modalities = im.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String)
+                                    .Select(x => x.GetString()!).ToList();
+                            list.Add(new ModelInfo(sid, m.TryGetProperty("name", out var n) ? n.GetString() : null, modalities));
+                        }
                     }
                 }
             }
@@ -108,28 +117,66 @@ public sealed class DeepSeekClient : IDisposable
     }
 
     /// <summary>流式翻译，逐段返回增量（思考过程与正文分开标记）。</summary>
-    public async IAsyncEnumerable<StreamChunk> TranslateStreamAsync(
-        TranslationRequest request, AppSettings settings,
+    public IAsyncEnumerable<StreamChunk> TranslateStreamAsync(
+        TranslationRequest request, AppSettings settings, CancellationToken ct = default)
+    {
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = PromptBuilder.SystemPrompt(request) },
+            new JsonObject { ["role"] = "user", ["content"] = request.Text },
+        };
+        return StreamChatAsync(settings, settings.Model, messages, hasImage: false, ct);
+    }
+
+    /// <summary>
+    /// 识图翻译：把图片（OpenAI 兼容的 image_url + base64 data URL）连同指令一起发给支持图片输入的模型。
+    /// 按 DeepSeek 文档，图片只能放在 user 消息里（system 消息只放文字）。
+    /// </summary>
+    public IAsyncEnumerable<StreamChunk> VisionStreamAsync(
+        byte[] image, string mimeType, string systemPrompt, string userText, string model, AppSettings settings,
+        CancellationToken ct = default)
+    {
+        var dataUrl = $"data:{mimeType};base64,{Convert.ToBase64String(image)}";
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+            new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = new JsonArray
+                {
+                    new JsonObject { ["type"] = "text", ["text"] = userText },
+                    new JsonObject
+                    {
+                        ["type"] = "image_url",
+                        // detail=original：保留原图（截图文字需要细节）
+                        ["image_url"] = new JsonObject { ["url"] = dataUrl, ["detail"] = "original" },
+                    },
+                },
+            },
+        };
+        return StreamChatAsync(settings, model, messages, hasImage: true, ct);
+    }
+
+    private async IAsyncEnumerable<StreamChunk> StreamChatAsync(
+        AppSettings settings, string? model, JsonArray messages, bool hasImage,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var apiKey = settings.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new TranslationException("尚未设置 DeepSeek API Key，请在“设置”中填写。", needsSettings: true);
 
-        if (string.IsNullOrWhiteSpace(settings.Model))
+        if (string.IsNullOrWhiteSpace(model))
             throw new TranslationException("尚未选择模型，请在“设置”中选择。", needsSettings: true);
+        model = model.Trim();
 
         var body = new JsonObject
         {
-            ["model"] = settings.Model.Trim(),
+            ["model"] = model,
             ["stream"] = true,
             // DeepSeek 默认开启思考模式；翻译场景默认关闭以提升速度（思考模式下 temperature 无效，故不发送）
             ["thinking"] = new JsonObject { ["type"] = settings.EnableThinking ? "enabled" : "disabled" },
-            ["messages"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "system", ["content"] = PromptBuilder.SystemPrompt(request) },
-                new JsonObject { ["role"] = "user", ["content"] = request.Text },
-            },
+            ["messages"] = messages,
         };
 
         var endpoint = ValidateUri(BuildEndpoint(settings.BaseUrl));
@@ -141,9 +188,9 @@ public sealed class DeepSeekClient : IDisposable
         msg.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         msg.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-        // 首包超时 30 秒（DeepSeek 高峰期可能排队）
+        // 首包超时：文字 30 秒，带图片 60 秒（需要上传和处理图片）
         using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        headerCts.CancelAfter(TimeSpan.FromSeconds(30));
+        headerCts.CancelAfter(TimeSpan.FromSeconds(hasImage ? 60 : 30));
 
         HttpResponseMessage resp;
         try
@@ -164,6 +211,15 @@ public sealed class DeepSeekClient : IDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 var errText = await SafeReadAsync(resp, ct);
+                if (hasImage && (int)resp.StatusCode is 400 or 422)
+                {
+                    var detail = ExtractErrorMessage(errText);
+                    throw new TranslationException(
+                        $"模型“{model}”拒绝了图片输入（HTTP {(int)resp.StatusCode}），它可能不支持识图。\n" +
+                        "请在“设置 → 截图翻译”中把识图模型改为支持图片的模型（例如 deepseek-flash），或把识别方式改为 Windows OCR。" +
+                        (string.IsNullOrEmpty(detail) ? "" : $"\n（{detail}）"),
+                        needsSettings: true);
+                }
                 throw MapHttpError(resp.StatusCode, errText);
             }
 

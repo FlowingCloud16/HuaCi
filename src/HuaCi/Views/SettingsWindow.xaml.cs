@@ -73,6 +73,11 @@ public partial class SettingsWindow : Window
         _shotHotkey = HotkeyGesture.TryParse(s.ScreenshotHotkey, out var g2) ? g2 : HotkeyGesture.DefaultScreenshot;
         ShotHotkeyBox.Text = _shotHotkey.ToString();
         LoadOcrLanguages(s.OcrLanguage);
+        EngineBox.SelectedItem = EngineBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == s.ScreenshotEngine) ?? EngineBox.Items[0];
+        VisionModelBox.Text = s.VisionModel;
+        ShowSourceCheck.IsChecked = s.ShowRecognizedSource;
+        UpdateEngineUi();
         bool autoStart;
         try { autoStart = AutoStartService.IsEnabled(); } catch { autoStart = s.AutoStart; }
         AutoStartCheck.IsChecked = autoStart;
@@ -97,6 +102,9 @@ public partial class SettingsWindow : Window
         s.EnableScreenshotHotkey = ShotHotkeyCheck.IsChecked == true;
         s.ScreenshotHotkey = _shotHotkey.ToString();
         s.OcrLanguage = (OcrLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+        s.ScreenshotEngine = (EngineBox.SelectedItem as ComboBoxItem)?.Tag as string ?? ScreenshotEngines.DeepSeek;
+        s.VisionModel = (VisionModelBox.Text ?? "").Trim();
+        s.ShowRecognizedSource = ShowSourceCheck.IsChecked == true;
         s.AutoStart = AutoStartCheck.IsChecked == true;
         s.EnableSelectIcon = SelectIconCheck.IsChecked == true;
         s.ShowSourceExpanded = ExpandSourceCheck.IsChecked == true;
@@ -164,6 +172,7 @@ public partial class SettingsWindow : Window
                     ToolTip = string.IsNullOrEmpty(m.Name) ? m.Id : m.Name,
                 });
 
+            FillVisionModels(models);
             if (models.Count == 0)
             {
                 ModelBox.Text = current;
@@ -336,6 +345,48 @@ public partial class SettingsWindow : Window
     private void ResetHotkey_Click(object sender, RoutedEventArgs e) => SetGesture(HotkeyBox, HotkeyGesture.Default);
 
     private void ResetShotHotkey_Click(object sender, RoutedEventArgs e) => SetGesture(ShotHotkeyBox, HotkeyGesture.DefaultScreenshot);
+
+    // ---------------- 截图识别方式 ----------------
+
+    private void EngineBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateEngineUi();
+
+    private void UpdateEngineUi()
+    {
+        if (VisionModelBox is null || EngineBox is null) return; // InitializeComponent 期间
+        bool vision = (EngineBox.SelectedItem as ComboBoxItem)?.Tag as string != ScreenshotEngines.WindowsOcr;
+        VisionModelBox.IsEnabled = vision;
+        ShowSourceCheck.IsEnabled = vision;
+    }
+
+    /// <summary>用 /models 结果填充识图模型下拉框：只列出声明支持图片的模型；接口未声明输入类型时列出全部。</summary>
+    private void FillVisionModels(IReadOnlyList<ModelInfo> models)
+    {
+        var current = (VisionModelBox.Text ?? "").Trim();
+        VisionModelBox.Items.Clear();
+        bool declared = models.Any(m => m.SupportsImages is not null);
+        var candidates = declared ? models.Where(m => m.SupportsImages == true).ToList() : models.ToList();
+        foreach (var m in candidates)
+            VisionModelBox.Items.Add(new ComboBoxItem { Content = m.Id, ToolTip = m.Name ?? m.Id });
+        VisionModelBox.Text = current;
+
+        var brush = (System.Windows.Media.Brush)FindResource("SubtleBrush");
+        if (declared && candidates.Count == 0)
+        {
+            VisionModelStatus.Text = "接口返回的模型都不支持图片输入，截图翻译请改用 Windows OCR。";
+            VisionModelStatus.Foreground = System.Windows.Media.Brushes.Crimson;
+        }
+        else if (current.Length > 0 && declared && models.FirstOrDefault(m => m.Id == current)?.SupportsImages == false)
+        {
+            VisionModelStatus.Text = $"注意：“{current}”不支持图片输入。支持图片的模型：{string.Join("、", candidates.Select(m => m.Id))}";
+            VisionModelStatus.Foreground = System.Windows.Media.Brushes.Crimson;
+        }
+        else
+        {
+            VisionModelStatus.Text = (declared ? "支持图片的模型：" + string.Join("、", candidates.Select(m => m.Id)) + "。" : "") +
+                "留空为自动选择。图片会发送到 DeepSeek，按图片 token 计费（每张最多约 1024 token）。";
+            VisionModelStatus.Foreground = brush;
+        }
+    }
 
     // ---------------- OCR 语言 ----------------
 
