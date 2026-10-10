@@ -266,6 +266,13 @@ public static partial class NativeMethods
 
     public static IntPtr MakeLParam(int x, int y) => new((y << 16) | (x & 0xFFFF));
 
+    // ---------- 显示器枚举 ----------
+    public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
     /// <summary>给窗口加上扩展样式。</summary>
     public static void AddExStyle(IntPtr hwnd, long style)
     {

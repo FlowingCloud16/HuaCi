@@ -58,9 +58,18 @@
                 <Expander.Header>
                     <TextBlock x:Name="SourceHeader" Text="原文" TextTrimming="CharacterEllipsis" MaxWidth="360"/>
                 </Expander.Header>
-                <TextBox x:Name="SourceBox" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
-                         Background="#F9FAFB" Padding="6,4" Margin="0,4,0,0" MaxHeight="140" FontSize="13"
-                         Foreground="#374151" VerticalScrollBarVisibility="Auto"/>
+                <StackPanel Margin="0,4,0,0">
+                    <TextBox x:Name="SourceBox" TextWrapping="Wrap" AcceptsReturn="True" BorderThickness="1"
+                             BorderBrush="{StaticResource BorderBrushLight}" Background="#F9FAFB" Padding="6,4"
+                             MaxHeight="160" FontSize="13" Foreground="#374151" VerticalScrollBarVisibility="Auto"
+                             PreviewKeyDown="SourceBox_PreviewKeyDown"/>
+                    <DockPanel Margin="0,4,0,0">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Margin="0"
+                                Content="重新翻译 (Ctrl+Enter)" Click="RetranslateButton_Click"/>
+                        <TextBlock x:Name="SourceKindText" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Center"
+                                   Text="原文（可修改后重新翻译）"/>
+                    </DockPanel>
+                </StackPanel>
             </Expander>
 
             <Separator Grid.Row="2" Margin="12,6" Background="{StaticResource BorderBrushLight}"/>

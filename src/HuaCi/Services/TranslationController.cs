@@ -54,7 +54,23 @@ public sealed class TranslationController : IDisposable
         Translate(text, anchor);
     }
 
-    public void Translate(string text, NativeMethods.POINT anchor, TranslationPopup? reuse = null)
+    public void Translate(string text, NativeMethods.POINT anchor, TranslationPopup? reuse = null) =>
+        TranslateCore(text, p => p.ShowNear(anchor), reuse, fromOcr: false);
+
+    /// <summary>截图翻译：弹窗显示在选区旁边，原文默认展开以便修正识别错误。</summary>
+    public void TranslateOcr(string text, NativeMethods.RECT region) =>
+        TranslateCore(text, p => p.ShowBeside(region), null, fromOcr: true);
+
+    /// <summary>截图翻译失败（无 OCR 语言、未识别到文字等）时在选区旁显示提示。</summary>
+    public void ShowOcrProblem(NativeMethods.RECT region, string message)
+    {
+        _cts?.Cancel();
+        var p = GetPopup(out bool reusePinned);
+        p.ShowMessage(message, "截图翻译", selectable: true);
+        if (!reusePinned) p.ShowBeside(region);
+    }
+
+    private void TranslateCore(string text, Action<TranslationPopup> place, TranslationPopup? reuse, bool fromOcr)
     {
         text = text.Trim();
         bool truncated = false;
@@ -82,8 +98,11 @@ public sealed class TranslationController : IDisposable
         {
             popup = GetPopup(out reuseInPlace);
         }
-        popup.Reset(text, req, settings.Model, settings.ShowSourceExpanded);
-        if (!reuseInPlace) popup.ShowNear(anchor);
+        bool expand = reuseInPlace && popup.SourceExpander.Visibility == System.Windows.Visibility.Visible
+            ? popup.SourceExpander.IsExpanded
+            : settings.ShowSourceExpanded || fromOcr;
+        popup.Reset(text, req, settings.Model, expand, fromOcr);
+        if (!reuseInPlace) place(popup);
 
         _ = RunAsync(popup, req, settings, truncated, ct);
     }
@@ -179,6 +198,7 @@ public sealed class TranslationController : IDisposable
             if (!string.IsNullOrWhiteSpace(src)) Translate(src, ScreenHelper.GetCursorPos(), p);
         };
         p.OpenSettingsRequested += (_, _) => _openSettings();
+        p.RetranslateRequested += (_, text) => TranslateCore(text, _ => { }, p, fromOcr: false);
         _popup = p;
         return p;
     }

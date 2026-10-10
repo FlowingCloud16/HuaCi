@@ -61,4 +61,21 @@ public static class ScreenHelper
         NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
         return pid == (uint)Environment.ProcessId;
     }
+
+    /// <summary>显示器信息（物理像素）。</summary>
+    public sealed record MonitorInfo(IntPtr Handle, NativeMethods.RECT Bounds, NativeMethods.RECT WorkArea, double Scale);
+
+    public static List<MonitorInfo> GetMonitors()
+    {
+        var list = new List<MonitorInfo>();
+        NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr h, IntPtr _, ref NativeMethods.RECT r, IntPtr _) =>
+        {
+            var info = new NativeMethods.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            NativeMethods.GetMonitorInfo(h, ref info);
+            var center = new NativeMethods.POINT(r.Left + r.Width / 2, r.Top + r.Height / 2);
+            list.Add(new MonitorInfo(h, info.rcMonitor, info.rcWork, GetScale(center)));
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
 }

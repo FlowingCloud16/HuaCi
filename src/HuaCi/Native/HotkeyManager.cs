@@ -3,18 +3,16 @@ using System.Windows.Interop;
 namespace HuaCi.Native;
 
 /// <summary>
-/// 通过 RegisterHotKey 注册全局热键。使用一个仅消息窗口接收 WM_HOTKEY。
+/// 通过 RegisterHotKey 注册多个全局热键（按 id 区分）。使用一个仅消息窗口接收 WM_HOTKEY。
 /// 必须在 UI 线程创建和使用。
 /// </summary>
 public sealed class HotkeyManager : IDisposable
 {
-    private const int HotkeyId = 0x4843; // "HC"
     private readonly HwndSource _source;
-    private bool _registered;
+    private readonly Dictionary<int, HotkeyGesture> _registered = new();
 
-    public event EventHandler? HotkeyPressed;
-
-    public HotkeyGesture? Current { get; private set; }
+    /// <summary>参数为热键 id。</summary>
+    public event EventHandler<int>? HotkeyPressed;
 
     public HotkeyManager()
     {
@@ -27,40 +25,43 @@ public sealed class HotkeyManager : IDisposable
         _source.AddHook(WndProc);
     }
 
+    public bool IsRegistered(int id) => _registered.ContainsKey(id);
+
     /// <summary>注册热键；失败（通常是被其他程序占用）时返回 false。</summary>
-    public bool Register(HotkeyGesture gesture)
+    public bool Register(int id, HotkeyGesture gesture)
     {
-        Unregister();
+        Unregister(id);
         if (!gesture.IsValid) return false;
-        _registered = NativeMethods.RegisterHotKey(_source.Handle, HotkeyId,
+        bool ok = NativeMethods.RegisterHotKey(_source.Handle, id,
             gesture.NativeModifiers | NativeMethods.MOD_NOREPEAT, gesture.VirtualKey);
-        Current = _registered ? gesture : null;
-        return _registered;
+        if (ok) _registered[id] = gesture;
+        return ok;
     }
 
-    public void Unregister()
+    public void Unregister(int id)
     {
-        if (_registered)
-        {
-            NativeMethods.UnregisterHotKey(_source.Handle, HotkeyId);
-            _registered = false;
-        }
-        Current = null;
+        if (_registered.Remove(id))
+            NativeMethods.UnregisterHotKey(_source.Handle, id);
+    }
+
+    public void UnregisterAll()
+    {
+        foreach (var id in _registered.Keys.ToList()) Unregister(id);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == NativeMethods.WM_HOTKEY && wParam.ToInt32() == HotkeyId)
+        if (msg == NativeMethods.WM_HOTKEY && _registered.ContainsKey(wParam.ToInt32()))
         {
             handled = true;
-            HotkeyPressed?.Invoke(this, EventArgs.Empty);
+            HotkeyPressed?.Invoke(this, wParam.ToInt32());
         }
         return IntPtr.Zero;
     }
 
     public void Dispose()
     {
-        Unregister();
+        UnregisterAll();
         _source.RemoveHook(WndProc);
         _source.Dispose();
     }

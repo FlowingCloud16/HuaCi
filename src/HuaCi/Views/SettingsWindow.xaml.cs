@@ -27,6 +27,7 @@ public partial class SettingsWindow : Window
     private readonly SettingsService _service;
     private readonly ISettingsHost _host;
     private HotkeyGesture _hotkey;
+    private HotkeyGesture _shotHotkey;
     private CancellationTokenSource? _testCts;
     private CancellationTokenSource? _modelsCts;
     private readonly System.Windows.Threading.DispatcherTimer _keyDebounce = new() { Interval = TimeSpan.FromMilliseconds(900) };
@@ -68,6 +69,10 @@ public partial class SettingsWindow : Window
         HotkeyCheck.IsChecked = s.EnableHotkey;
         _hotkey = HotkeyGesture.TryParse(s.Hotkey, out var g) ? g : HotkeyGesture.Default;
         HotkeyBox.Text = _hotkey.ToString();
+        ShotHotkeyCheck.IsChecked = s.EnableScreenshotHotkey;
+        _shotHotkey = HotkeyGesture.TryParse(s.ScreenshotHotkey, out var g2) ? g2 : HotkeyGesture.DefaultScreenshot;
+        ShotHotkeyBox.Text = _shotHotkey.ToString();
+        LoadOcrLanguages(s.OcrLanguage);
         bool autoStart;
         try { autoStart = AutoStartService.IsEnabled(); } catch { autoStart = s.AutoStart; }
         AutoStartCheck.IsChecked = autoStart;
@@ -89,6 +94,9 @@ public partial class SettingsWindow : Window
         s.TargetLanguageForChinese = string.IsNullOrWhiteSpace(TargetZhBox.Text) ? "English" : TargetZhBox.Text.Trim();
         s.EnableHotkey = HotkeyCheck.IsChecked == true;
         s.Hotkey = _hotkey.ToString();
+        s.EnableScreenshotHotkey = ShotHotkeyCheck.IsChecked == true;
+        s.ScreenshotHotkey = _shotHotkey.ToString();
+        s.OcrLanguage = (OcrLanguageBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         s.AutoStart = AutoStartCheck.IsChecked == true;
         s.EnableSelectIcon = SelectIconCheck.IsChecked == true;
         s.ShowSourceExpanded = ExpandSourceCheck.IsChecked == true;
@@ -250,34 +258,49 @@ public partial class SettingsWindow : Window
 
     // ---------------- 快捷键录制 ----------------
 
+    private const string HotkeyIdleHint = "可选。选中文字后按快捷键翻译（需包含 Ctrl / Alt / Shift / Win 之一）";
+    private const string ShotIdleHint = "按下后框选屏幕区域，本地识别文字再翻译";
+
+    private bool IsShotBox(object sender) => ReferenceEquals(sender, ShotHotkeyBox);
+
+    private HotkeyGesture GetGesture(object sender) => IsShotBox(sender) ? _shotHotkey : _hotkey;
+
+    private void SetGesture(object sender, HotkeyGesture g)
+    {
+        if (IsShotBox(sender)) { _shotHotkey = g; ShotHotkeyBox.Text = g.ToString(); }
+        else { _hotkey = g; HotkeyBox.Text = g.ToString(); }
+    }
+
+    private TextBlock HintFor(object sender) => IsShotBox(sender) ? ShotHotkeyHint : HotkeyHint;
+
     private void HotkeyBox_GotFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         _host.SuspendHotkey(true);
-        HotkeyHint.Text = "请按下新的组合键…（Esc 取消，Backspace 恢复默认）";
+        HintFor(sender).Text = "请按下新的组合键…（Esc 取消，Backspace 恢复默认）";
     }
 
     private void HotkeyBox_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         _host.SuspendHotkey(false);
-        HotkeyHint.Text = "可选。选中文字后按快捷键翻译（需包含 Ctrl / Alt / Shift / Win 之一）";
-        HotkeyBox.Text = _hotkey.ToString();
+        HintFor(sender).Text = IsShotBox(sender) ? ShotIdleHint : HotkeyIdleHint;
+        SetGesture(sender, GetGesture(sender));
     }
 
     private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         e.Handled = true;
+        var box = (TextBox)sender;
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.ImeProcessed) key = e.ImeProcessedKey;
 
         if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
         {
-            HotkeyBox.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            box.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
             return;
         }
         if (key == Key.Back && Keyboard.Modifiers == ModifierKeys.None)
         {
-            _hotkey = HotkeyGesture.Default;
-            HotkeyBox.Text = _hotkey.ToString();
+            SetGesture(sender, IsShotBox(sender) ? HotkeyGesture.DefaultScreenshot : HotkeyGesture.Default);
             return;
         }
 
@@ -285,20 +308,19 @@ public partial class SettingsWindow : Window
         if (HotkeyGesture.IsModifierKey(key))
         {
             // 只按了修饰键：显示预览
-            HotkeyBox.Text = mods != ModifierKeys.None ? ModsPreview(mods) : "";
+            box.Text = mods != ModifierKeys.None ? ModsPreview(mods) : "";
             return;
         }
 
         var gesture = new HotkeyGesture(mods, key);
         if (!gesture.IsValid)
         {
-            HotkeyBox.Text = key.ToString();
-            HotkeyHint.Text = "需要至少一个修饰键（Ctrl / Alt / Shift / Win）";
+            box.Text = key.ToString();
+            HintFor(sender).Text = "需要至少一个修饰键（Ctrl / Alt / Shift / Win）";
             return;
         }
-        _hotkey = gesture;
-        HotkeyBox.Text = gesture.ToString();
-        HotkeyHint.Text = "已设置，保存后生效";
+        SetGesture(sender, gesture);
+        HintFor(sender).Text = "已设置，保存后生效";
     }
 
     private static string ModsPreview(ModifierKeys m)
@@ -311,10 +333,40 @@ public partial class SettingsWindow : Window
         return string.Join("+", parts) + "+";
     }
 
-    private void ResetHotkey_Click(object sender, RoutedEventArgs e)
+    private void ResetHotkey_Click(object sender, RoutedEventArgs e) => SetGesture(HotkeyBox, HotkeyGesture.Default);
+
+    private void ResetShotHotkey_Click(object sender, RoutedEventArgs e) => SetGesture(ShotHotkeyBox, HotkeyGesture.DefaultScreenshot);
+
+    // ---------------- OCR 语言 ----------------
+
+    private void LoadOcrLanguages(string selected)
     {
-        _hotkey = HotkeyGesture.Default;
-        HotkeyBox.Text = _hotkey.ToString();
+        OcrLanguageBox.Items.Clear();
+        OcrLanguageBox.Items.Add(new ComboBoxItem { Content = "自动（推荐）", Tag = "" });
+        var langs = OcrService.GetInstalledLanguages();
+        foreach (var l in langs)
+            OcrLanguageBox.Items.Add(new ComboBoxItem { Content = l.ToString(), Tag = l.Tag });
+
+        bool missingSelected = !string.IsNullOrEmpty(selected) &&
+            !langs.Any(l => string.Equals(l.Tag, selected, StringComparison.OrdinalIgnoreCase));
+        if (missingSelected)
+            OcrLanguageBox.Items.Add(new ComboBoxItem { Content = $"{selected}（未安装，将自动选择）", Tag = selected });
+
+        OcrLanguageBox.SelectedItem = OcrLanguageBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => string.Equals((string)i.Tag, selected, StringComparison.OrdinalIgnoreCase))
+            ?? OcrLanguageBox.Items[0];
+
+        if (langs.Count == 0)
+        {
+            OcrStatus.Text = OcrService.NoLanguageHelp;
+            OcrStatus.Foreground = System.Windows.Media.Brushes.Crimson;
+        }
+        else
+        {
+            OcrStatus.Text = "已安装的 OCR 语言：" + string.Join("、", langs.Select(l => l.DisplayName)) +
+                "。自动模式会按系统语言优先，必要时尝试多种语言并选最佳结果。";
+            OcrStatus.Foreground = (System.Windows.Media.Brush)FindResource("SubtleBrush");
+        }
     }
 
     // ---------------- 保存 ----------------

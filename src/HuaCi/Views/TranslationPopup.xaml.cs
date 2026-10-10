@@ -15,11 +15,15 @@ public partial class TranslationPopup : Window
     private readonly MouseHook _outsideClickHook = new();
     private NativeMethods.POINT _anchor;
     private bool _growUp;      // 放在鼠标上方时，向上生长
+    private int _aboveBottom;  // 向上生长时窗口底边的位置
     private bool _userMoved;   // 用户拖动过则不再跟随锚点
     private IntPtr _hwnd;
     private bool _closing;
 
     public event EventHandler? RetryRequested;
+
+    /// <summary>用户编辑原文后点击"重新翻译"（参数为新原文）。</summary>
+    public event EventHandler<string>? RetranslateRequested;
     public event EventHandler? OpenSettingsRequested;
 
     public bool IsPinned => PinButton.IsChecked == true;
@@ -45,15 +49,16 @@ public partial class TranslationPopup : Window
 
     // ---------------- 内容 ----------------
 
-    public void Reset(string source, TranslationRequest req, string model, bool expandSource)
+    public void Reset(string source, TranslationRequest req, string model, bool expandSource, bool fromOcr = false)
     {
+        SourceKindText.Text = fromOcr ? "识别结果（可修改后重新翻译）" : "原文（可修改后重新翻译）";
         var lang = req.SourceIsChinese ? "中文" : "自动检测";
         if (req.AlreadyInTarget) lang = "中文";
         DirectionText.Text = $"{lang} → {req.TargetLanguage}" + (req.IsSingleWord ? "  ·  词典" : "");
         SourceExpander.Visibility = Visibility.Visible;
         SourceBox.Text = source;
         var firstLine = source.Trim().Split('\n')[0].Trim();
-        SourceHeader.Text = "原文：" + (firstLine.Length > 40 ? firstLine[..40] + "…" : firstLine);
+        SourceHeader.Text = (fromOcr ? "识别：" : "原文：") + (firstLine.Length > 40 ? firstLine[..40] + "…" : firstLine);
         SourceExpander.IsExpanded = expandSource;
         SetModel(model);
 
@@ -119,15 +124,26 @@ public partial class TranslationPopup : Window
     }
 
     /// <summary>仅显示一条提示（例如没有选中文字）。</summary>
-    public void ShowMessage(string message)
+    public void ShowMessage(string message, string title = "划词翻译", bool selectable = false)
     {
-        DirectionText.Text = "划词翻译";
+        DirectionText.Text = title;
         SourceExpander.Visibility = Visibility.Collapsed;
-        LoadingText.Visibility = Visibility.Visible;
-        LoadingText.Text = message;
-        ResultBox.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Collapsed;
-        CopyButton.IsEnabled = false;
+        if (selectable)
+        {
+            // 用只读文本框显示，方便复制其中的命令
+            LoadingText.Visibility = Visibility.Collapsed;
+            ResultBox.Text = message;
+            ResultBox.Visibility = Visibility.Visible;
+            CopyButton.IsEnabled = true;
+        }
+        else
+        {
+            LoadingText.Visibility = Visibility.Visible;
+            LoadingText.Text = message;
+            ResultBox.Visibility = Visibility.Collapsed;
+            CopyButton.IsEnabled = false;
+        }
     }
 
     // ---------------- 显示与定位 ----------------
@@ -135,30 +151,55 @@ public partial class TranslationPopup : Window
     /// <summary>在鼠标位置附近显示（物理像素坐标）。</summary>
     public void ShowNear(NativeMethods.POINT anchor)
     {
-        _anchor = anchor;
-        _userMoved = false;
+        int off = (int)(CursorOffset * ScreenHelper.GetScale(anchor));
+        var excl = new NativeMethods.RECT { Left = anchor.X - off, Top = anchor.Y - off, Right = anchor.X + off, Bottom = anchor.Y + off };
+        ShowAnchored(excl, alignLeft: false);
+    }
 
+    /// <summary>显示在某个屏幕区域（例如截图选区）旁边：优先放在下方并左对齐，放不下则放上方。</summary>
+    public void ShowBeside(NativeMethods.RECT region)
+    {
+        int gap = (int)(6 * ScreenHelper.GetScale(new NativeMethods.POINT(region.Left, region.Bottom)));
+        var excl = new NativeMethods.RECT { Left = region.Left, Top = region.Top - gap, Right = region.Right, Bottom = region.Bottom + gap };
+        ShowAnchored(excl, alignLeft: true);
+    }
+
+    /// <summary>
+    /// 在"排除区"旁边显示：下方放得下就放下方（向下生长），否则放上方（向上生长）。
+    /// alignLeft=true 时与排除区左边对齐，否则放在其右侧。
+    /// </summary>
+    private void ShowAnchored(NativeMethods.RECT excl, bool alignLeft)
+    {
+        _userMoved = false;
         var helper = new WindowInteropHelper(this);
         _hwnd = helper.EnsureHandle();
 
+        // 参考点：排除区下边缘（截图选区很大时取靠近底部的位置所在的显示器）
+        var refPt = new NativeMethods.POINT(alignLeft ? excl.Left : excl.Right, excl.Bottom);
+        var wa = ScreenHelper.GetWorkArea(refPt);
+        if (refPt.Y >= wa.Bottom) refPt = new NativeMethods.POINT(refPt.X, Math.Max(excl.Top, wa.Top));
+        _anchor = refPt;
+
         // 先把窗口移到目标显示器，使 WPF 按该显示器 DPI 缩放（PerMonitorV2）
-        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, anchor.X, anchor.Y, 0, 0,
+        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, refPt.X, refPt.Y, 0, 0,
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
 
         if (!IsVisible) Show();
         UpdateLayout();
 
-        double scale = ScreenHelper.GetScale(anchor);
-        var wa = ScreenHelper.GetWorkArea(anchor);
+        double scale = ScreenHelper.GetScale(refPt);
+        wa = ScreenHelper.GetWorkArea(refPt);
         NativeMethods.GetWindowRect(_hwnd, out var r);
-        int offset = (int)(CursorOffset * scale);
         // 预估最终高度，避免流式输出时窗口超出屏幕底部
         int expected = Math.Max(r.Height, (int)(260 * scale));
-        _growUp = anchor.Y + offset + expected > wa.Bottom && anchor.Y - wa.Top > wa.Bottom - anchor.Y;
+        bool roomBelow = excl.Bottom + expected <= wa.Bottom;
+        bool roomAbove = excl.Top - expected >= wa.Top;
+        _growUp = !roomBelow && (roomAbove || excl.Top - wa.Top > wa.Bottom - excl.Bottom);
+        _aboveBottom = excl.Top;
 
-        int x = anchor.X + offset;
-        if (x + r.Width > wa.Right) x = anchor.X - offset - r.Width;
-        int y = _growUp ? anchor.Y - offset - r.Height : anchor.Y + offset;
+        int x = alignLeft ? excl.Left : excl.Right;
+        if (x + r.Width > wa.Right) x = alignLeft ? wa.Right - r.Width : excl.Left - r.Width;
+        int y = _growUp ? excl.Top - r.Height : excl.Bottom;
         (x, y) = ScreenHelper.Clamp(wa, x, y, r.Width, r.Height);
         NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, x, y, 0, 0,
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
@@ -183,11 +224,7 @@ public partial class TranslationPopup : Window
         var wa = ScreenHelper.GetWorkArea(_userMoved ? center : _anchor);
 
         int x = r.Left, y = r.Top;
-        if (_growUp && !_userMoved)
-        {
-            int offset = (int)(CursorOffset * ScreenHelper.GetScale(_anchor));
-            y = _anchor.Y - offset - r.Height;
-        }
+        if (_growUp && !_userMoved) y = _aboveBottom - r.Height;
         (x, y) = ScreenHelper.Clamp(wa, x, y, r.Width, r.Height);
         if (x != r.Left || y != r.Top)
             NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, x, y, 0, 0,
@@ -271,6 +308,24 @@ public partial class TranslationPopup : Window
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => SafeClose();
+
+    private void RetranslateButton_Click(object sender, RoutedEventArgs e) => RequestRetranslate();
+
+    private void SourceBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Ctrl+Enter：用修改后的原文重新翻译
+        if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            e.Handled = true;
+            RequestRetranslate();
+        }
+    }
+
+    private void RequestRetranslate()
+    {
+        var text = SourceBox.Text.Trim();
+        if (text.Length > 0) RetranslateRequested?.Invoke(this, text);
+    }
 
     private void RetryButton_Click(object sender, RoutedEventArgs e) => RetryRequested?.Invoke(this, EventArgs.Empty);
 

@@ -1,0 +1,30 @@
+<Window x:Class="HuaCi.Views.ScreenshotOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="截图翻译"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Background="Black"
+        Cursor="Cross"
+        FontFamily="{StaticResource UiFont}"
+        UseLayoutRounding="True">
+    <Grid x:Name="Root" ClipToBounds="True">
+        <Image x:Name="Shot" Stretch="Fill" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+        <!-- 选区之外变暗 -->
+        <Path x:Name="Dim" Fill="#80000000"/>
+        <Canvas>
+            <Rectangle x:Name="SelBorder" Stroke="#4D6BFE" StrokeThickness="1.5" Visibility="Collapsed"
+                       SnapsToDevicePixels="True"/>
+            <Border x:Name="SizeLabel" Background="#CC1F2937" CornerRadius="3" Padding="6,2" Visibility="Collapsed">
+                <TextBlock x:Name="SizeText" Foreground="White" FontSize="12"/>
+            </Border>
+        </Canvas>
+        <Border x:Name="Hint" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0"
+                Background="#E61F2937" CornerRadius="6" Padding="14,8" IsHitTestVisible="False">
+            <TextBlock Foreground="White" FontSize="14"
+                       Text="拖动鼠标框选要翻译的文字区域　·　Esc 或右键取消"/>
+        </Border>
+    </Grid>
+</Window>

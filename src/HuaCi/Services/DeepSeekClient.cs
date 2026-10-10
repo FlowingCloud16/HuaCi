@@ -33,7 +33,7 @@ public sealed class DeepSeekClient : IDisposable
         };
         // 流式响应总时长由调用方的 CancellationToken 控制
         _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.2");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.3");
     }
 
     /// <summary>规范化 Base URL：去掉末尾的 / 和 /chat/completions。</summary>

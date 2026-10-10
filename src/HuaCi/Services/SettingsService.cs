@@ -45,13 +45,17 @@ public sealed class SettingsService
     /// </summary>
     private static void Migrate(AppSettings s, string json)
     {
-        if (json.Contains("\"SettingsVersion\"", StringComparison.Ordinal) && s.SettingsVersion >= AppSettings.CurrentVersion)
-            return;
-        s.EnableSelectIcon = true;
-        s.EnableHotkey = false;
-        if (s.Model is "deepseek-chat") s.Model = "";
+        int version = json.Contains("\"SettingsVersion\"", StringComparison.Ordinal) ? s.SettingsVersion : 1;
+        if (version >= AppSettings.CurrentVersion) return;
+        if (version < 2)
+        {
+            s.EnableSelectIcon = true;
+            s.EnableHotkey = false;
+            if (s.Model is "deepseek-chat") s.Model = "";
+        }
+        // v2 → v3：新增截图翻译相关字段，缺省值由属性初始值提供，无需处理
         s.SettingsVersion = AppSettings.CurrentVersion;
-        Log.Info("设置已从旧版本迁移");
+        Log.Info($"设置已从 v{version} 迁移到 v{AppSettings.CurrentVersion}");
     }
 
     public void Save(AppSettings settings)

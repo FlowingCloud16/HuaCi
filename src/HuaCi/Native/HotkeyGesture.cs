@@ -7,6 +7,10 @@ public readonly record struct HotkeyGesture(ModifierKeys Modifiers, Key Key)
 {
     public static readonly HotkeyGesture Default = new(ModifierKeys.Control | ModifierKeys.Alt, Key.D);
 
+    /// <summary>截图翻译默认快捷键。避开 Ctrl+Alt+S（Android Studio / IntelliJ 的“设置”）、
+    /// Ctrl+Alt+A（QQ 截图）、Alt+A（微信截图）、Win+Shift+S（系统截图）。</summary>
+    public static readonly HotkeyGesture DefaultScreenshot = new(ModifierKeys.Control | ModifierKeys.Alt, Key.Q);
+
     public bool IsValid => Key != Key.None && Modifiers != ModifierKeys.None && !IsModifierKey(Key);
 
     public uint NativeModifiers

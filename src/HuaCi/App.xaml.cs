@@ -20,6 +20,10 @@ public partial class App : Application, ISettingsHost
     private TrayIconService? _tray;
     private TranslationController? _controller;
     private SelectIconWatcher? _selectIcon;
+    private ScreenshotController? _screenshot;
+
+    private const int HotkeyTranslate = 1;
+    private const int HotkeyScreenshot = 2;
     private SettingsWindow? _settingsWindow;
     private bool _paused;
 
@@ -50,18 +54,28 @@ public partial class App : Application, ISettingsHost
         _tray.SettingsRequested += (_, _) => OpenSettings();
         _tray.PauseToggled += (_, paused) => SetPaused(paused);
         _tray.TranslateRequested += (_, _) => TranslateClipboard();
+        _tray.ScreenshotRequested += (_, _) => StartScreenshot();
         _tray.ExitRequested += (_, _) => ExitApp();
 
         _controller = new TranslationController(_settings, OpenSettings);
 
         _hotkeys = new HotkeyManager();
-        _hotkeys.HotkeyPressed += (_, _) => _ = _controller.TranslateSelectionAsync();
+        _hotkeys.HotkeyPressed += (_, id) =>
+        {
+            if (id == HotkeyScreenshot) StartScreenshot();
+            else _ = _controller.TranslateSelectionAsync();
+        };
 
         _selectIcon = new SelectIconWatcher(Dispatcher);
+        _screenshot = new ScreenshotController(_settings, _controller, () =>
+        {
+            _selectIcon.HideIcon();
+            _controller.CloseActivePopup();
+        });
         _selectIcon.IconClicked += (_, _) => _ = _controller.TranslateSelectionAsync(silentIfEmpty: true);
 
         var s = _settings.Current;
-        RegisterHotkeyFromSettings(s, showError: true);
+        RegisterHotkeysFromSettings(s, showError: true);
         _selectIcon.SetEnabled(s.EnableSelectIcon);
         if (s.AutoStart) AutoStartService.RefreshPathIfEnabled();
         _tray.UpdateState(DescribeTrigger(s), false);
@@ -85,20 +99,36 @@ public partial class App : Application, ISettingsHost
         }
     }
 
-    /// <summary>按设置注册快捷键；快捷键关闭时注销。</summary>
-    private void RegisterHotkeyFromSettings(AppSettings s, bool showError)
+    private void StartScreenshot()
     {
-        if (!s.EnableHotkey)
+        if (_paused || _screenshot is null) return;
+        _ = _screenshot.StartAsync();
+    }
+
+    /// <summary>按设置注册所有快捷键；关闭的快捷键会被注销。返回注册失败的描述（全部成功时为 null）。</summary>
+    private string? RegisterHotkeysFromSettings(AppSettings s, bool showError)
+    {
+        var failures = new List<string>();
+        void One(int id, bool enabled, string text, HotkeyGesture fallback, string name)
         {
-            _hotkeys!.Unregister();
-            return;
+            if (!enabled)
+            {
+                _hotkeys!.Unregister(id);
+                return;
+            }
+            if (!HotkeyGesture.TryParse(text, out var g)) g = fallback;
+            if (!_hotkeys!.Register(id, g))
+            {
+                Log.Warn($"{name}快捷键 {g} 注册失败");
+                failures.Add($"{name}快捷键 {g}");
+            }
         }
-        if (!HotkeyGesture.TryParse(s.Hotkey, out var g)) g = HotkeyGesture.Default;
-        if (!_hotkeys!.Register(g) && showError)
-        {
-            Log.Warn($"热键 {g} 注册失败");
-            _tray?.ShowBalloon("快捷键注册失败", $"{g} 可能已被其他程序占用，请在设置中更换。", warning: true);
-        }
+        One(HotkeyTranslate, s.EnableHotkey, s.Hotkey, HotkeyGesture.Default, "划词翻译");
+        One(HotkeyScreenshot, s.EnableScreenshotHotkey, s.ScreenshotHotkey, HotkeyGesture.DefaultScreenshot, "截图翻译");
+        if (failures.Count == 0) return null;
+        var msg = string.Join("、", failures) + " 已被系统或其他程序占用，请在设置中换一个组合。";
+        if (showError) _tray?.ShowBalloon("快捷键注册失败", msg, warning: true);
+        return msg;
     }
 
     private static string HowToUse(AppSettings s)
@@ -106,7 +136,9 @@ public partial class App : Application, ISettingsHost
         var parts = new List<string>();
         if (s.EnableSelectIcon) parts.Add("选中文字后点击旁边的「翻译」按钮");
         if (s.EnableHotkey) parts.Add($"选中文字后按 {s.Hotkey}");
-        return parts.Count == 0 ? "划词按钮和快捷键都已关闭，可在设置中开启。" : string.Join("，或", parts) + "即可翻译。";
+        var text = parts.Count == 0 ? "划词按钮和快捷键都已关闭，可在设置中开启。" : string.Join("，或", parts) + "即可翻译。";
+        if (s.EnableScreenshotHotkey) text += $"按 {s.ScreenshotHotkey} 截图翻译。";
+        return text;
     }
 
     private static string DescribeTrigger(AppSettings s) =>
@@ -135,13 +167,13 @@ public partial class App : Application, ISettingsHost
         var s = _settings.Current;
         if (paused)
         {
-            _hotkeys?.Unregister();
+            _hotkeys?.UnregisterAll();
             _selectIcon?.SetEnabled(false);
             _controller?.CloseActivePopup();
         }
         else
         {
-            RegisterHotkeyFromSettings(s, showError: true);
+            RegisterHotkeysFromSettings(s, showError: true);
             _selectIcon?.SetEnabled(s.EnableSelectIcon);
         }
         _tray?.UpdateState(DescribeTrigger(s), paused);
@@ -163,36 +195,44 @@ public partial class App : Application, ISettingsHost
 
     // ---------------- ISettingsHost ----------------
 
+    private bool _hotkeysSuspended;
+
     public void SuspendHotkey(bool suspend)
     {
-        if (_paused || _hotkeys is null) return;
-        if (suspend) _hotkeys.Unregister();
-        else if (_hotkeys.Current is null) RegisterHotkeyFromSettings(_settings.Current, showError: false);
+        if (_paused || _hotkeys is null || suspend == _hotkeysSuspended) return;
+        _hotkeysSuspended = suspend;
+        if (suspend) _hotkeys.UnregisterAll();
+        else RegisterHotkeysFromSettings(_settings.Current, showError: false);
     }
 
     public bool TryApply(AppSettings s, out string? error)
     {
         error = null;
-        if (!HotkeyGesture.TryParse(s.Hotkey, out var g))
+        HotkeyGesture? g1 = null, g2 = null;
+        if (s.EnableHotkey)
         {
-            if (s.EnableHotkey)
-            {
-                error = "快捷键无效。";
-                return false;
-            }
-            g = HotkeyGesture.Default;
+            if (!HotkeyGesture.TryParse(s.Hotkey, out var g)) { error = "划词翻译快捷键无效。"; return false; }
+            g1 = g;
+        }
+        if (s.EnableScreenshotHotkey)
+        {
+            if (!HotkeyGesture.TryParse(s.ScreenshotHotkey, out var g)) { error = "截图翻译快捷键无效。"; return false; }
+            g2 = g;
+        }
+        if (g1 is not null && g1 == g2)
+        {
+            error = "划词翻译和截图翻译不能使用同一个快捷键。";
+            return false;
         }
 
-        if (!_paused && !s.EnableHotkey)
+        if (!_paused)
         {
-            _hotkeys!.Unregister();
-        }
-        else if (!_paused)
-        {
-            if (!_hotkeys!.Register(g))
+            _hotkeysSuspended = false;
+            var failure = RegisterHotkeysFromSettings(s, showError: false);
+            if (failure is not null)
             {
-                RegisterHotkeyFromSettings(_settings.Current, showError: false); // 恢复旧热键
-                error = $"快捷键 {g} 已被系统或其他程序占用，请换一个组合。";
+                RegisterHotkeysFromSettings(_settings.Current, showError: false); // 恢复旧快捷键
+                error = failure;
                 return false;
             }
         }

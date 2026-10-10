@@ -12,6 +12,7 @@ public sealed class TrayIconService : IDisposable
 
     public event EventHandler? SettingsRequested;
     public event EventHandler? TranslateRequested;
+    public event EventHandler? ScreenshotRequested;
     public event EventHandler<bool>? PauseToggled;
     public event EventHandler? ExitRequested;
 
@@ -26,6 +27,9 @@ public sealed class TrayIconService : IDisposable
         _hotkeyItem = new WinForms.ToolStripMenuItem("翻译剪贴板文字");
         _hotkeyItem.Click += (_, _) => TranslateRequested?.Invoke(this, EventArgs.Empty);
 
+        var screenshotItem = new WinForms.ToolStripMenuItem("截图翻译");
+        screenshotItem.Click += (_, _) => ScreenshotRequested?.Invoke(this, EventArgs.Empty);
+
         var settingsItem = new WinForms.ToolStripMenuItem("设置");
         settingsItem.Font = new System.Drawing.Font(menu.Font, System.Drawing.FontStyle.Bold);
         settingsItem.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
@@ -36,7 +40,7 @@ public sealed class TrayIconService : IDisposable
         var exitItem = new WinForms.ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
 
-        menu.Items.AddRange([settingsItem, _pauseItem, new WinForms.ToolStripSeparator(), _hotkeyItem, new WinForms.ToolStripSeparator(), exitItem]);
+        menu.Items.AddRange([settingsItem, _pauseItem, new WinForms.ToolStripSeparator(), screenshotItem, _hotkeyItem, new WinForms.ToolStripSeparator(), exitItem]);
 
         _icon = new WinForms.NotifyIcon
         {

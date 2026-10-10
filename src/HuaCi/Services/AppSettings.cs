@@ -7,6 +7,7 @@ public sealed class AppSettings
 {
     public const string DefaultBaseUrl = "https://api.deepseek.com";
     public const string DefaultHotkey = "Ctrl+Alt+D";
+    public const string DefaultScreenshotHotkey = "Ctrl+Alt+Q";
 
     /// <summary>DPAPI（CurrentUser）加密后的 API Key，Base64。</summary>
     public string? ApiKeyProtected { get; set; }
@@ -35,6 +36,14 @@ public sealed class AppSettings
 
     public string Hotkey { get; set; } = DefaultHotkey;
 
+    /// <summary>截图翻译快捷键（默认开启）。</summary>
+    public bool EnableScreenshotHotkey { get; set; } = true;
+
+    public string ScreenshotHotkey { get; set; } = DefaultScreenshotHotkey;
+
+    /// <summary>OCR 语言标签（如 zh-Hans-CN、en-US）。留空 = 自动。</summary>
+    public string OcrLanguage { get; set; } = "";
+
     public bool AutoStart { get; set; }
 
     /// <summary>弹窗默认是否展开原文。</summary>
@@ -45,7 +54,7 @@ public sealed class AppSettings
     /// <summary>设置文件格式版本，用于从旧版本迁移。</summary>
     public int SettingsVersion { get; set; } = CurrentVersion;
 
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     [JsonIgnore]
     public string ApiKey

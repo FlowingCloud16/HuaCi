@@ -141,6 +141,37 @@
         </Grid>
         <TextBlock x:Name="HotkeyHint" Margin="20,4,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
                    Text="可选。选中文字后按快捷键翻译（需包含 Ctrl / Alt / Shift / Win 之一）"/>
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <CheckBox x:Name="ShotHotkeyCheck" Content="截图翻译快捷键" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <TextBox x:Name="ShotHotkeyBox" Grid.Column="1" Height="28" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                     IsEnabled="{Binding IsChecked, ElementName=ShotHotkeyCheck}"
+                     PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotKeyboardFocus="HotkeyBox_GotFocus"
+                     LostKeyboardFocus="HotkeyBox_LostFocus" InputMethod.IsInputMethodEnabled="False"
+                     ToolTip="点击后直接按下新的组合键"/>
+            <Button Grid.Column="2" Content="默认" MinWidth="0" Margin="8,0,0,0" Padding="8,2" Click="ResetShotHotkey_Click"
+                    IsEnabled="{Binding IsChecked, ElementName=ShotHotkeyCheck}"/>
+        </Grid>
+        <TextBlock x:Name="ShotHotkeyHint" Margin="20,4,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
+                   Text="按下后框选屏幕区域，本地识别文字再翻译"/>
+
+        <!-- 截图翻译 -->
+        <TextBlock Style="{StaticResource Section}" Text="截图翻译（OCR）"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="90"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Style="{StaticResource Label}" Text="OCR 语言"/>
+            <ComboBox x:Name="OcrLanguageBox" Grid.Column="1" Height="28"/>
+        </Grid>
+        <TextBox x:Name="OcrStatus" Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
+                 TextWrapping="Wrap" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                 Text="使用 Windows 自带的文字识别，在本机完成，不上传图片。"/>
 
         <!-- 常规 -->
         <TextBlock Style="{StaticResource Section}" Text="常规"/>
