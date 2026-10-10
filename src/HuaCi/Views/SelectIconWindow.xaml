@@ -1,0 +1,22 @@
+<Window x:Class="HuaCi.Views.SelectIconWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="划词翻译图标"
+        Width="40" Height="40"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Topmost="True"
+        Focusable="False">
+    <Border x:Name="Badge" Margin="6" CornerRadius="6" Background="White" Cursor="Hand"
+            BorderBrush="#D1D5DB" BorderThickness="1" ToolTip="翻译选中的文字"
+            MouseLeftButtonUp="Badge_MouseLeftButtonUp" MouseLeftButtonDown="Badge_MouseLeftButtonDown">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.25"/>
+        </Border.Effect>
+        <Image Source="pack://application:,,,/Assets/app.png" Margin="3"/>
+    </Border>
+</Window>

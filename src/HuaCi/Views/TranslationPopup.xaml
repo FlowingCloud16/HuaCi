@@ -1,0 +1,89 @@
+<Window x:Class="HuaCi.Views.TranslationPopup"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="划词翻译"
+        Width="440"
+        SizeToContent="Height"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ShowActivated="True"
+        FontFamily="{StaticResource UiFont}"
+        FontSize="14"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+    <!-- 外边距留给阴影 -->
+    <Border Margin="12" CornerRadius="10" Background="White"
+            BorderBrush="{StaticResource BorderBrushLight}" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.22" Color="Black"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- 标题栏（可拖动） -->
+            <Grid x:Name="Header" Grid.Row="0" Background="Transparent" Margin="12,8,8,4"
+                  MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Image Source="pack://application:,,,/Assets/app.png" Width="16" Height="16" VerticalAlignment="Center"/>
+                <TextBlock x:Name="DirectionText" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource SubtleBrush}" FontSize="12" Text="自动检测 → 简体中文"
+                           TextTrimming="CharacterEllipsis"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="CopyButton" Style="{StaticResource IconButton}" Content="&#xE8C8;"
+                            ToolTip="复制译文" Click="CopyButton_Click"/>
+                    <ToggleButton x:Name="PinButton" Style="{StaticResource IconToggle}" Content="&#xE718;"
+                                  ToolTip="固定窗口（点击外部不关闭）" Checked="PinButton_Changed" Unchecked="PinButton_Changed"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="11"
+                            ToolTip="关闭 (Esc)" Click="CloseButton_Click"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- 原文（可折叠） -->
+            <Expander x:Name="SourceExpander" Grid.Row="1" Margin="10,0,12,0" Focusable="False"
+                      Foreground="{StaticResource SubtleBrush}" FontSize="12">
+                <Expander.Header>
+                    <TextBlock x:Name="SourceHeader" Text="原文" TextTrimming="CharacterEllipsis" MaxWidth="360"/>
+                </Expander.Header>
+                <TextBox x:Name="SourceBox" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
+                         Background="#F9FAFB" Padding="6,4" Margin="0,4,0,0" MaxHeight="140" FontSize="13"
+                         Foreground="#374151" VerticalScrollBarVisibility="Auto"/>
+            </Expander>
+
+            <Separator Grid.Row="2" Margin="12,6" Background="{StaticResource BorderBrushLight}"/>
+
+            <!-- 译文 / 状态 -->
+            <Grid Grid.Row="3" Margin="12,0,12,4" MinHeight="28">
+                <TextBlock x:Name="LoadingText" Text="翻译中…" Foreground="{StaticResource SubtleBrush}"
+                           VerticalAlignment="Top" Margin="4,2,0,0"/>
+                <TextBox x:Name="ResultBox" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
+                         Background="Transparent" Padding="0" MaxHeight="380" Foreground="#111827"
+                         VerticalScrollBarVisibility="Auto" Visibility="Collapsed" FontSize="15"/>
+                <StackPanel x:Name="ErrorPanel" Visibility="Collapsed">
+                    <TextBlock x:Name="ErrorText" Foreground="#DC2626" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button x:Name="RetryButton" Style="{StaticResource LinkButton}" Content="重试" Click="RetryButton_Click"/>
+                        <Button x:Name="SettingsButton" Style="{StaticResource LinkButton}" Content="打开设置" Click="SettingsButton_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- 底部信息 -->
+            <TextBlock x:Name="FooterText" Grid.Row="4" Margin="12,2,12,8" FontSize="11"
+                       Foreground="#9CA3AF" Text="DeepSeek"/>
+        </Grid>
+    </Border>
+</Window>
