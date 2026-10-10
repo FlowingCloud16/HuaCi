@@ -22,8 +22,9 @@ public sealed class TranslationController : IDisposable
         _openSettings = openSettings;
     }
 
-    /// <summary>获取当前选中文字并翻译（热键或小图标触发）。</summary>
-    public async Task TranslateSelectionAsync()
+    /// <summary>获取当前选中文字并翻译。</summary>
+    /// <param name="silentIfEmpty">划词按钮触发时为 true：取不到文字就静默结束，不弹出提示。</param>
+    public async Task TranslateSelectionAsync(bool silentIfEmpty = false)
     {
         if (_capturing) return;
         _capturing = true;
@@ -45,6 +46,7 @@ public sealed class TranslationController : IDisposable
 
         if (text is null)
         {
+            if (silentIfEmpty) return;
             ShowTransientMessage(anchor, "没有获取到选中的文字。\n请先选中文字再按快捷键；以管理员身份运行的程序需要本工具也以管理员身份运行。");
             return;
         }
@@ -90,10 +92,21 @@ public sealed class TranslationController : IDisposable
     {
         try
         {
-            await foreach (var piece in _client.TranslateStreamAsync(req, settings, ct))
+            if (req.AlreadyInTarget)
+            {
+                popup.ShowNotice("原文已是中文，无需翻译。\n如需把中文译成英文等其他语言，请在“设置 → 翻译”中开启“中文原文改译为”。");
+                return;
+            }
+
+            settings = await EnsureModelAsync(settings, ct);
+            if (ct.IsCancellationRequested || popup.IsClosed) return;
+            popup.SetModel(settings.Model);
+
+            await foreach (var chunk in _client.TranslateStreamAsync(req, settings, ct))
             {
                 if (ct.IsCancellationRequested || popup.IsClosed) return;
-                popup.AppendResult(piece);
+                if (chunk.IsReasoning) popup.ShowThinking(chunk.Text.Length);
+                else popup.AppendResult(chunk.Text);
             }
             if (ct.IsCancellationRequested) return;
             if (truncated) popup.AppendResult($"\n\n（原文过长，仅翻译了前 {MaxChars} 个字符）");
@@ -112,6 +125,29 @@ public sealed class TranslationController : IDisposable
             Log.Error("翻译失败", ex);
             if (!ct.IsCancellationRequested && !popup.IsClosed) popup.ShowError("翻译失败：" + ex.Message, false);
         }
+    }
+
+    /// <summary>未选择模型时，自动使用 GET /models 返回的第一个模型并保存。</summary>
+    private async Task<AppSettings> EnsureModelAsync(AppSettings settings, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.Model)) return settings;
+        var key = settings.ApiKey;
+        if (string.IsNullOrWhiteSpace(key))
+            throw new TranslationException("尚未设置 API Key，请在“设置”中填写。", needsSettings: true);
+
+        var models = await _client.ListModelsAsync(settings.BaseUrl, key, ct);
+        if (models.Count == 0)
+            throw new TranslationException("接口没有返回可用模型，请在“设置”中手动填写模型名称。", needsSettings: true);
+
+        var updated = _settings.Current.Clone();
+        updated.Model = models[0].Id;
+        try { _settings.Save(updated); }
+        catch (Exception ex) { Log.Warn("保存自动选择的模型失败：" + ex.Message); }
+        Log.Info("未选择模型，自动使用 " + updated.Model);
+
+        var copy = settings.Clone();
+        copy.Model = updated.Model;
+        return copy;
     }
 
     private TranslationPopup GetPopup(out bool reusePinned)

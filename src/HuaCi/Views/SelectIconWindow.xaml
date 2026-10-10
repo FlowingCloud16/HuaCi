@@ -1,8 +1,8 @@
 <Window x:Class="HuaCi.Views.SelectIconWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="划词翻译图标"
-        Width="40" Height="40"
+        Title="划词翻译按钮"
+        SizeToContent="WidthAndHeight"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -10,13 +10,27 @@
         ShowInTaskbar="False"
         ShowActivated="False"
         Topmost="True"
-        Focusable="False">
-    <Border x:Name="Badge" Margin="6" CornerRadius="6" Background="White" Cursor="Hand"
-            BorderBrush="#D1D5DB" BorderThickness="1" ToolTip="翻译选中的文字"
-            MouseLeftButtonUp="Badge_MouseLeftButtonUp" MouseLeftButtonDown="Badge_MouseLeftButtonDown">
+        Focusable="False"
+        FontFamily="{StaticResource UiFont}"
+        UseLayoutRounding="True">
+    <!-- 外边距留给阴影 -->
+    <Border x:Name="Badge" Margin="8" CornerRadius="13" Height="26" Padding="5,0,10,0"
+            Background="White" BorderBrush="#DCE1F5" BorderThickness="1" Cursor="Hand"
+            ToolTip="翻译选中的文字"
+            MouseLeftButtonDown="Badge_MouseLeftButtonDown" MouseLeftButtonUp="Badge_MouseLeftButtonUp"
+            MouseEnter="Badge_MouseEnter" MouseLeave="Badge_MouseLeave">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.25"/>
+            <DropShadowEffect BlurRadius="10" ShadowDepth="1.5" Opacity="0.22" Color="#1E2A5A"/>
         </Border.Effect>
-        <Image Source="pack://application:,,,/Assets/app.png" Margin="3"/>
+        <Border.RenderTransform>
+            <ScaleTransform x:Name="Scale" ScaleX="1" ScaleY="1"/>
+        </Border.RenderTransform>
+        <Border.RenderTransformOrigin>0,0</Border.RenderTransformOrigin>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Image Source="pack://application:,,,/Assets/app.png" Width="16" Height="16"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+            <TextBlock x:Name="Label" Text="翻译" Margin="5,0,0,0" FontSize="12" VerticalAlignment="Center"
+                       Foreground="#3B4CCA"/>
+        </StackPanel>
     </Border>
 </Window>

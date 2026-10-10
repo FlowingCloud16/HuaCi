@@ -32,6 +32,10 @@ public static class LanguageDetector
         or >= 0x20000 and <= 0x2EBEF   // 扩展 B-F
         or >= 0xF900 and <= 0xFAFF;    // 兼容汉字
 
+    /// <summary>是否含有非汉字的字母（拉丁、假名、谚文等）。</summary>
+    public static bool HasForeignLetters(string text) =>
+        text.EnumerateRunes().Any(r => System.Text.Rune.IsLetter(r) && !IsHan(r.Value));
+
     /// <summary>是否像单个词（用于词典式释义）。</summary>
     public static bool IsSingleWord(string text)
     {

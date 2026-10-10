@@ -6,34 +6,46 @@ namespace HuaCi.Services;
 public sealed class AppSettings
 {
     public const string DefaultBaseUrl = "https://api.deepseek.com";
-    public const string DefaultModel = "deepseek-chat";
+    public const string DefaultHotkey = "Ctrl+Alt+D";
 
     /// <summary>DPAPI（CurrentUser）加密后的 API Key，Base64。</summary>
     public string? ApiKeyProtected { get; set; }
 
     public string BaseUrl { get; set; } = DefaultBaseUrl;
-    public string Model { get; set; } = DefaultModel;
 
-    /// <summary>DeepSeek 官方建议翻译场景使用 1.3。</summary>
-    public double Temperature { get; set; } = 1.3;
+    /// <summary>模型 ID。留空时自动使用 GET /models 返回的第一个模型。</summary>
+    public string Model { get; set; } = "";
 
-    public string Hotkey { get; set; } = "Ctrl+Alt+D";
+    /// <summary>是否开启 DeepSeek 思考模式（更准确但更慢）。默认关闭以保证翻译速度。</summary>
+    public bool EnableThinking { get; set; }
 
-    /// <summary>原文主要是中文时翻译成的语言。</summary>
-    public string TargetLanguageForChinese { get; set; } = "English";
-
-    /// <summary>原文是其他语言时翻译成的语言。</summary>
+    /// <summary>目标语言：所有外语原文都翻译成这个语言。</summary>
     public string TargetLanguage { get; set; } = "简体中文";
 
-    public bool AutoStart { get; set; }
+    /// <summary>可选：原文是中文时改为翻译成 <see cref="TargetLanguageForChinese"/>（默认关闭）。</summary>
+    public bool TranslateChineseToOther { get; set; }
 
-    /// <summary>划词后在鼠标旁显示小图标（默认关闭）。</summary>
-    public bool EnableSelectIcon { get; set; }
+    public string TargetLanguageForChinese { get; set; } = "English";
+
+    /// <summary>划词后在鼠标旁显示翻译按钮（主要交互方式，默认开启）。</summary>
+    public bool EnableSelectIcon { get; set; } = true;
+
+    /// <summary>可选的全局快捷键（默认关闭）。</summary>
+    public bool EnableHotkey { get; set; }
+
+    public string Hotkey { get; set; } = DefaultHotkey;
+
+    public bool AutoStart { get; set; }
 
     /// <summary>弹窗默认是否展开原文。</summary>
     public bool ShowSourceExpanded { get; set; }
 
     public bool FirstRunTipShown { get; set; }
+
+    /// <summary>设置文件格式版本，用于从旧版本迁移。</summary>
+    public int SettingsVersion { get; set; } = CurrentVersion;
+
+    public const int CurrentVersion = 2;
 
     [JsonIgnore]
     public string ApiKey

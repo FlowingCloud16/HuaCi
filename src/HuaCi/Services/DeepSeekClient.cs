@@ -9,6 +9,15 @@ using System.Text.Json.Nodes;
 
 namespace HuaCi.Services;
 
+/// <summary>流式增量：正文或思考过程（reasoning_content）。</summary>
+public readonly record struct StreamChunk(string Text, bool IsReasoning);
+
+/// <summary>GET /models 返回的模型。</summary>
+public sealed record ModelInfo(string Id, string? Name)
+{
+    public override string ToString() => Id;
+}
+
 /// <summary>DeepSeek（OpenAI 兼容）Chat Completions 流式客户端。</summary>
 public sealed class DeepSeekClient : IDisposable
 {
@@ -24,19 +33,82 @@ public sealed class DeepSeekClient : IDisposable
         };
         // 流式响应总时长由调用方的 CancellationToken 控制
         _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.1");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HuaCi/0.2");
     }
 
-    public static string BuildEndpoint(string? baseUrl)
+    /// <summary>规范化 Base URL：去掉末尾的 / 和 /chat/completions。</summary>
+    public static string NormalizeBase(string? baseUrl)
     {
         var b = string.IsNullOrWhiteSpace(baseUrl) ? AppSettings.DefaultBaseUrl : baseUrl.Trim();
         b = b.TrimEnd('/');
-        if (b.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)) return b;
-        return b + "/chat/completions";
+        const string suffix = "/chat/completions";
+        if (b.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) b = b[..^suffix.Length];
+        return b;
     }
 
-    /// <summary>流式翻译，逐段返回增量文本。</summary>
-    public async IAsyncEnumerable<string> TranslateStreamAsync(
+    public static string BuildEndpoint(string? baseUrl) => NormalizeBase(baseUrl) + "/chat/completions";
+
+    public static string BuildModelsEndpoint(string? baseUrl) => NormalizeBase(baseUrl) + "/models";
+
+    private static Uri ValidateUri(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || (u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeHttp))
+            throw new TranslationException("Base URL 格式不正确，请在“设置”中检查。", needsSettings: true);
+        return u;
+    }
+
+    /// <summary>获取可用模型列表（GET {baseUrl}/models）。</summary>
+    public async Task<IReadOnlyList<ModelInfo>> ListModelsAsync(string? baseUrl, string apiKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new TranslationException("尚未设置 API Key。", needsSettings: true);
+
+        using var msg = new HttpRequestMessage(HttpMethod.Get, ValidateUri(BuildModelsEndpoint(baseUrl)));
+        msg.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(15));
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await _http.SendAsync(msg, cts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TranslationException("获取模型列表超时，请检查网络。");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new TranslationException($"网络错误：无法连接到 {SafeHost(baseUrl)}。\n{ex.Message}", inner: ex);
+        }
+
+        using (resp)
+        {
+            var body = await SafeReadAsync(resp, ct);
+            if (!resp.IsSuccessStatusCode) throw MapHttpError(resp.StatusCode, body);
+            var list = new List<ModelInfo>();
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var m in data.EnumerateArray())
+                    {
+                        if (m.TryGetProperty("id", out var id) && id.GetString() is { Length: > 0 } sid)
+                            list.Add(new ModelInfo(sid, m.TryGetProperty("name", out var n) ? n.GetString() : null));
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                throw new TranslationException("模型列表格式无法识别：" + ex.Message, inner: ex);
+            }
+            return list;
+        }
+    }
+
+    /// <summary>流式翻译，逐段返回增量（思考过程与正文分开标记）。</summary>
+    public async IAsyncEnumerable<StreamChunk> TranslateStreamAsync(
         TranslationRequest request, AppSettings settings,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
@@ -44,11 +116,15 @@ public sealed class DeepSeekClient : IDisposable
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new TranslationException("尚未设置 DeepSeek API Key，请在“设置”中填写。", needsSettings: true);
 
+        if (string.IsNullOrWhiteSpace(settings.Model))
+            throw new TranslationException("尚未选择模型，请在“设置”中选择。", needsSettings: true);
+
         var body = new JsonObject
         {
-            ["model"] = string.IsNullOrWhiteSpace(settings.Model) ? AppSettings.DefaultModel : settings.Model.Trim(),
+            ["model"] = settings.Model.Trim(),
             ["stream"] = true,
-            ["temperature"] = settings.Temperature,
+            // DeepSeek 默认开启思考模式；翻译场景默认关闭以提升速度（思考模式下 temperature 无效，故不发送）
+            ["thinking"] = new JsonObject { ["type"] = settings.EnableThinking ? "enabled" : "disabled" },
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = PromptBuilder.SystemPrompt(request) },
@@ -56,9 +132,7 @@ public sealed class DeepSeekClient : IDisposable
             },
         };
 
-        if (!Uri.TryCreate(BuildEndpoint(settings.BaseUrl), UriKind.Absolute, out var endpoint) ||
-            (endpoint.Scheme != Uri.UriSchemeHttps && endpoint.Scheme != Uri.UriSchemeHttp))
-            throw new TranslationException("Base URL 格式不正确，请在“设置”中检查。", needsSettings: true);
+        var endpoint = ValidateUri(BuildEndpoint(settings.BaseUrl));
 
         using var msg = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
@@ -123,12 +197,15 @@ public sealed class DeepSeekClient : IDisposable
                 var data = line.AsSpan(5).Trim().ToString();
                 if (data == "[DONE]") break;
 
-                string? piece = ParseDelta(data, out var apiError);
+                var (content, reasoning) = ParseDelta(data, out var apiError);
                 if (apiError is not null) throw new TranslationException("DeepSeek 返回错误：" + apiError);
-                if (!string.IsNullOrEmpty(piece))
+                // 是否为思考内容只看响应字段 reasoning_content，不依赖模型名称
+                if (!string.IsNullOrEmpty(reasoning))
+                    yield return new StreamChunk(reasoning, true);
+                if (!string.IsNullOrEmpty(content))
                 {
                     any = true;
-                    yield return piece;
+                    yield return new StreamChunk(content, false);
                 }
             }
 
@@ -136,7 +213,7 @@ public sealed class DeepSeekClient : IDisposable
         }
     }
 
-    private static string? ParseDelta(string json, out string? error)
+    private static (string? Content, string? Reasoning) ParseDelta(string json, out string? error)
     {
         error = null;
         try
@@ -146,22 +223,22 @@ public sealed class DeepSeekClient : IDisposable
             if (root.TryGetProperty("error", out var err))
             {
                 error = err.TryGetProperty("message", out var m) ? m.GetString() : err.ToString();
-                return null;
+                return (null, null);
             }
-            if (root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
+            if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array
+                && choices.GetArrayLength() > 0 && choices[0].TryGetProperty("delta", out var delta))
             {
-                var c0 = choices[0];
-                if (c0.TryGetProperty("delta", out var delta) &&
-                    delta.TryGetProperty("content", out var content) &&
-                    content.ValueKind == JsonValueKind.String)
-                    return content.GetString();
+                return (Str(delta, "content"), Str(delta, "reasoning_content"));
             }
         }
         catch (JsonException)
         {
             // 忽略无法解析的行
         }
-        return null;
+        return (null, null);
+
+        static string? Str(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     }
 
     private static TranslationException MapHttpError(HttpStatusCode code, string body)
@@ -170,7 +247,7 @@ public sealed class DeepSeekClient : IDisposable
         string suffix = string.IsNullOrEmpty(detail) ? "" : $"\n（{detail}）";
         return (int)code switch
         {
-            400 => new TranslationException("请求格式错误（400），请检查模型名称等设置。" + suffix, needsSettings: true),
+            400 => new TranslationException("请求被拒绝（400），请检查所选模型等设置。" + suffix, needsSettings: true),
             401 => new TranslationException("API Key 无效或已失效（401），请在“设置”中检查。" + suffix, needsSettings: true),
             402 => new TranslationException("DeepSeek 账户余额不足（402），请前往开放平台充值。" + suffix),
             403 => new TranslationException("没有访问权限（403）。" + suffix, needsSettings: true),

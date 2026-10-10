@@ -204,6 +204,68 @@ public static partial class NativeMethods
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
+    // ---------- 命中测试 / 光标 / 窗口类名（用于减少划词误判） ----------
+    public const int WM_NCHITTEST = 0x0084;
+    public const int HTCLIENT = 1;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+    public const uint GA_ROOT = 2;
+    public const int WH_KEYBOARD_LL = 13;
+    public const int WM_KEYDOWN = 0x0100;
+    public const int WM_SYSKEYDOWN = 0x0104;
+
+    public const int IDC_ARROW = 32512;
+    public const int IDC_HAND = 32649;
+    public const int IDC_SIZEALL = 32646;
+    public const int IDC_SIZENWSE = 32642;
+    public const int IDC_SIZENESW = 32643;
+    public const int IDC_SIZEWE = 32644;
+    public const int IDC_SIZENS = 32645;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CURSORINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public POINT ptScreenPos;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT pt);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorInfo(ref CURSORINFO pci);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+    public static IntPtr StandardCursor(int id) => LoadCursor(IntPtr.Zero, new IntPtr(id));
+
+    public static IntPtr CurrentCursor()
+    {
+        var ci = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+        return GetCursorInfo(ref ci) ? ci.hCursor : IntPtr.Zero;
+    }
+
+    public static string ClassNameOf(IntPtr hwnd)
+    {
+        var sb = new System.Text.StringBuilder(256);
+        return GetClassName(hwnd, sb, sb.Capacity) > 0 ? sb.ToString() : "";
+    }
+
+    public static IntPtr MakeLParam(int x, int y) => new((y << 16) | (x & 0xFFFF));
+
     /// <summary>给窗口加上扩展样式。</summary>
     public static void AddExStyle(IntPtr hwnd, long style)
     {

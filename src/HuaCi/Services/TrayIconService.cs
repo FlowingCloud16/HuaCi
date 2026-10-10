@@ -58,9 +58,9 @@ public sealed class TrayIconService : IDisposable
         return new System.Drawing.Icon(stream, WinForms.SystemInformation.SmallIconSize);
     }
 
-    public void UpdateState(string hotkey, bool paused)
+    public void UpdateState(string trigger, bool paused)
     {
-        var text = paused ? "划词翻译（已暂停）" : $"划词翻译 - {hotkey}";
+        var text = paused ? "划词翻译（已暂停）" : $"划词翻译 - {trigger}";
         _icon.Text = text.Length > 63 ? text[..63] : text; // NotifyIcon.Text 上限 63 字符
         if (_pauseItem.Checked != paused) _pauseItem.Checked = paused;
     }

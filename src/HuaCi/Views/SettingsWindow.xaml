@@ -56,12 +56,13 @@
                 <RowDefinition Height="8"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Style="{StaticResource Label}" Text="API Key"/>
             <Grid Grid.Column="1">
-                <PasswordBox x:Name="ApiKeyBox" Height="28"/>
-                <TextBox x:Name="ApiKeyPlainBox" Height="28" Visibility="Collapsed"/>
+                <PasswordBox x:Name="ApiKeyBox" Height="28" PasswordChanged="ApiKey_Changed"/>
+                <TextBox x:Name="ApiKeyPlainBox" Height="28" Visibility="Collapsed" TextChanged="ApiKey_Changed"/>
             </Grid>
             <CheckBox x:Name="ShowKeyCheck" Grid.Column="2" Content="显示" Margin="8,0,0,0" VerticalAlignment="Center"
                       Checked="ShowKeyCheck_Changed" Unchecked="ShowKeyCheck_Changed"/>
@@ -72,16 +73,22 @@
                     Click="ResetBaseUrl_Click"/>
 
             <TextBlock Grid.Row="4" Style="{StaticResource Label}" Text="模型"/>
-            <ComboBox x:Name="ModelBox" Grid.Row="4" Grid.Column="1" IsEditable="True" Height="28">
-                <ComboBoxItem Content="deepseek-chat"/>
-                <ComboBoxItem Content="deepseek-reasoner"/>
-            </ComboBox>
-            <Button x:Name="TestButton" Grid.Row="4" Grid.Column="2" Content="测试" MinWidth="0" Margin="8,0,0,0"
-                    Padding="8,2" Click="TestButton_Click"/>
+            <ComboBox x:Name="ModelBox" Grid.Row="4" Grid.Column="1" IsEditable="True" Height="28"
+                      ToolTip="从接口获取的模型列表；也可以直接输入模型名称。留空则自动使用列表中的第一个。"/>
+            <Button x:Name="RefreshModelsButton" Grid.Row="4" Grid.Column="2" Content="刷新" MinWidth="0" Margin="8,0,0,0"
+                    Padding="8,2" Click="RefreshModels_Click" ToolTip="从接口重新获取模型列表"/>
 
-            <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
-                <TextBlock x:Name="TestResult" TextWrapping="Wrap" Foreground="{StaticResource SubtleBrush}" Visibility="Collapsed"/>
-                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource SubtleBrush}" FontSize="12" TextWrapping="Wrap">
+            <TextBlock x:Name="ModelStatus" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,4,0,0"
+                       FontSize="12" Foreground="{StaticResource SubtleBrush}" TextWrapping="Wrap"
+                       Text="填写 API Key 后会自动获取模型列表"/>
+
+            <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                <CheckBox x:Name="ThinkingCheck" Content="开启思考模式（更准确但明显更慢，一般翻译不需要）"/>
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                    <Button x:Name="TestButton" Content="测试连接" Click="TestButton_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="TestResult" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource SubtleBrush}" Visibility="Collapsed"/>
+                <TextBlock Margin="0,6,0,0" Foreground="{StaticResource SubtleBrush}" FontSize="12" TextWrapping="Wrap">
                     还没有 Key？前往
                     <Hyperlink NavigateUri="https://platform.deepseek.com/api_keys" RequestNavigate="Hyperlink_RequestNavigate">DeepSeek 开放平台</Hyperlink>
                     创建。Key 使用 Windows DPAPI 加密保存，仅当前用户可解密。
@@ -93,42 +100,51 @@
         <TextBlock Style="{StaticResource Section}" Text="翻译"/>
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="90"/>
+                <ColumnDefinition Width="Auto" MinWidth="90"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="8"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <TextBlock Style="{StaticResource Label}" Text="中文译为"/>
-            <ComboBox x:Name="TargetZhBox" Grid.Column="1" IsEditable="True" Height="28"/>
-            <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="其他语言译为"/>
-            <ComboBox x:Name="TargetOtherBox" Grid.Row="2" Grid.Column="1" IsEditable="True" Height="28"/>
+            <TextBlock Style="{StaticResource Label}" Text="译为"/>
+            <ComboBox x:Name="TargetBox" Grid.Column="1" IsEditable="True" Height="28"/>
+            <CheckBox x:Name="ZhToOtherCheck" Grid.Row="2" Content="中文原文改译为" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <ComboBox x:Name="TargetZhBox" Grid.Row="2" Grid.Column="1" IsEditable="True" Height="28"
+                      IsEnabled="{Binding IsChecked, ElementName=ZhToOtherCheck}"/>
+            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" FontSize="12"
+                       Foreground="{StaticResource SubtleBrush}" TextWrapping="Wrap"
+                       Text="自动识别原文语言。默认所有外文都译成上面的语言；选中纯中文句子时只提示“已是中文”，中文单词会给出汉语释义。勾选后，中文原文改译成指定语言。"/>
         </Grid>
 
-        <!-- 快捷键 -->
-        <TextBlock Style="{StaticResource Section}" Text="快捷键"/>
-        <Grid>
+        <!-- 触发方式 -->
+        <TextBlock Style="{StaticResource Section}" Text="触发方式"/>
+        <CheckBox x:Name="SelectIconCheck" Content="划词后在鼠标旁显示「翻译」按钮（推荐）"/>
+        <TextBlock Margin="20,0,0,4" FontSize="12" Foreground="{StaticResource SubtleBrush}" TextWrapping="Wrap"
+                   Text="拖动选择或双击选词后出现，点击即翻译；点击别处、按键、滚动或 5 秒后自动消失。"/>
+        <Grid Margin="0,4,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="90"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Style="{StaticResource Label}" Text="翻译选中文字"/>
+            <CheckBox x:Name="HotkeyCheck" Content="启用快捷键" VerticalAlignment="Center" Margin="0,0,12,0"/>
             <TextBox x:Name="HotkeyBox" Grid.Column="1" Height="28" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                     IsEnabled="{Binding IsChecked, ElementName=HotkeyCheck}"
                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" GotKeyboardFocus="HotkeyBox_GotFocus"
                      LostKeyboardFocus="HotkeyBox_LostFocus" InputMethod.IsInputMethodEnabled="False"
                      ToolTip="点击后直接按下新的组合键，例如 Ctrl+Alt+D"/>
-            <Button Grid.Column="2" Content="默认" MinWidth="0" Margin="8,0,0,0" Padding="8,2" Click="ResetHotkey_Click"/>
+            <Button Grid.Column="2" Content="默认" MinWidth="0" Margin="8,0,0,0" Padding="8,2" Click="ResetHotkey_Click"
+                    IsEnabled="{Binding IsChecked, ElementName=HotkeyCheck}"/>
         </Grid>
-        <TextBlock x:Name="HotkeyHint" Margin="90,4,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
-                   Text="点击输入框后按下新的组合键（需包含 Ctrl / Alt / Shift / Win 之一）"/>
+        <TextBlock x:Name="HotkeyHint" Margin="20,4,0,0" FontSize="12" Foreground="{StaticResource SubtleBrush}"
+                   Text="可选。选中文字后按快捷键翻译（需包含 Ctrl / Alt / Shift / Win 之一）"/>
 
         <!-- 常规 -->
         <TextBlock Style="{StaticResource Section}" Text="常规"/>
         <CheckBox x:Name="AutoStartCheck" Content="开机时自动启动"/>
-        <CheckBox x:Name="SelectIconCheck" Content="划词后在鼠标旁显示翻译图标（拖动选择或双击选词后出现，点击即翻译）"/>
         <CheckBox x:Name="ExpandSourceCheck" Content="弹窗中默认展开原文"/>
 
         <!-- 按钮 -->

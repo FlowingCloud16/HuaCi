@@ -67,7 +67,7 @@
 
             <!-- 译文 / 状态 -->
             <Grid Grid.Row="3" Margin="12,0,12,4" MinHeight="28">
-                <TextBlock x:Name="LoadingText" Text="翻译中…" Foreground="{StaticResource SubtleBrush}"
+                <TextBlock x:Name="LoadingText" Text="翻译中…" TextWrapping="Wrap" Foreground="{StaticResource SubtleBrush}"
                            VerticalAlignment="Top" Margin="4,2,0,0"/>
                 <TextBox x:Name="ResultBox" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
                          Background="Transparent" Padding="0" MaxHeight="380" Foreground="#111827"

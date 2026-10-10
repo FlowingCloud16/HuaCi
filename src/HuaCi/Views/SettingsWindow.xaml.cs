@@ -21,23 +21,39 @@ public interface ISettingsHost
 
 public partial class SettingsWindow : Window
 {
+    private static readonly string[] Targets = ["简体中文", "繁體中文", "English", "日本語", "한국어"];
     private static readonly string[] ZhTargets = ["English", "日本語", "한국어", "Français", "Deutsch", "Español", "Русский", "繁體中文"];
-    private static readonly string[] OtherTargets = ["简体中文", "繁體中文", "English"];
 
     private readonly SettingsService _service;
     private readonly ISettingsHost _host;
     private HotkeyGesture _hotkey;
     private CancellationTokenSource? _testCts;
+    private CancellationTokenSource? _modelsCts;
+    private readonly System.Windows.Threading.DispatcherTimer _keyDebounce = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    private bool _loading;
 
     public SettingsWindow(SettingsService service, ISettingsHost host)
     {
         InitializeComponent();
         _service = service;
         _host = host;
+        foreach (var t in Targets) TargetBox.Items.Add(t);
         foreach (var t in ZhTargets) TargetZhBox.Items.Add(t);
-        foreach (var t in OtherTargets) TargetOtherBox.Items.Add(t);
+        _loading = true;
         LoadFrom(service.Current);
-        Closed += (_, _) => { _testCts?.Cancel(); _host.SuspendHotkey(false); };
+        _loading = false;
+        _keyDebounce.Tick += async (_, _) => { _keyDebounce.Stop(); await FetchModelsAsync(auto: true); };
+        Loaded += async (_, _) =>
+        {
+            if (CurrentApiKey.Length > 0) await FetchModelsAsync(auto: true);
+        };
+        Closed += (_, _) =>
+        {
+            _testCts?.Cancel();
+            _modelsCts?.Cancel();
+            _keyDebounce.Stop();
+            _host.SuspendHotkey(false);
+        };
     }
 
     private void LoadFrom(AppSettings s)
@@ -45,8 +61,11 @@ public partial class SettingsWindow : Window
         ApiKeyBox.Password = s.ApiKey;
         BaseUrlBox.Text = s.BaseUrl;
         ModelBox.Text = s.Model;
+        ThinkingCheck.IsChecked = s.EnableThinking;
+        TargetBox.Text = s.TargetLanguage;
+        ZhToOtherCheck.IsChecked = s.TranslateChineseToOther;
         TargetZhBox.Text = s.TargetLanguageForChinese;
-        TargetOtherBox.Text = s.TargetLanguage;
+        HotkeyCheck.IsChecked = s.EnableHotkey;
         _hotkey = HotkeyGesture.TryParse(s.Hotkey, out var g) ? g : HotkeyGesture.Default;
         HotkeyBox.Text = _hotkey.ToString();
         bool autoStart;
@@ -63,9 +82,12 @@ public partial class SettingsWindow : Window
         var s = _service.Current.Clone();
         s.ApiKey = CurrentApiKey;
         s.BaseUrl = string.IsNullOrWhiteSpace(BaseUrlBox.Text) ? AppSettings.DefaultBaseUrl : BaseUrlBox.Text.Trim();
-        s.Model = string.IsNullOrWhiteSpace(ModelBox.Text) ? AppSettings.DefaultModel : ModelBox.Text.Trim();
+        s.Model = (ModelBox.Text ?? "").Trim(); // 留空：翻译时自动使用 /models 的第一个
+        s.EnableThinking = ThinkingCheck.IsChecked == true;
+        s.TargetLanguage = string.IsNullOrWhiteSpace(TargetBox.Text) ? "简体中文" : TargetBox.Text.Trim();
+        s.TranslateChineseToOther = ZhToOtherCheck.IsChecked == true;
         s.TargetLanguageForChinese = string.IsNullOrWhiteSpace(TargetZhBox.Text) ? "English" : TargetZhBox.Text.Trim();
-        s.TargetLanguage = string.IsNullOrWhiteSpace(TargetOtherBox.Text) ? "简体中文" : TargetOtherBox.Text.Trim();
+        s.EnableHotkey = HotkeyCheck.IsChecked == true;
         s.Hotkey = _hotkey.ToString();
         s.AutoStart = AutoStartCheck.IsChecked == true;
         s.EnableSelectIcon = SelectIconCheck.IsChecked == true;
@@ -93,26 +115,117 @@ public partial class SettingsWindow : Window
 
     private void ResetBaseUrl_Click(object sender, RoutedEventArgs e) => BaseUrlBox.Text = AppSettings.DefaultBaseUrl;
 
+    // ---------------- 模型列表 ----------------
+
+    private void ApiKey_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _keyDebounce.Stop();
+        if (CurrentApiKey.Length >= 10) _keyDebounce.Start(); // 输入停顿后自动获取
+    }
+
+    private async void RefreshModels_Click(object sender, RoutedEventArgs e) => await FetchModelsAsync(auto: false);
+
+    /// <summary>GET {baseUrl}/models 并填充下拉框。返回是否成功。</summary>
+    private async Task<bool> FetchModelsAsync(bool auto)
+    {
+        var key = CurrentApiKey;
+        if (key.Length == 0)
+        {
+            SetModelStatus("请先填写 API Key", error: !auto);
+            return false;
+        }
+
+        _modelsCts?.Cancel();
+        _modelsCts = new CancellationTokenSource();
+        var ct = _modelsCts.Token;
+        RefreshModelsButton.IsEnabled = false;
+        SetModelStatus("正在获取模型列表…", error: false);
+        try
+        {
+            using var client = new DeepSeekClient();
+            var models = await client.ListModelsAsync(BaseUrlBox.Text, key, ct);
+            if (ct.IsCancellationRequested) return false;
+
+            var current = (ModelBox.Text ?? "").Trim();
+            ModelBox.Items.Clear();
+            foreach (var m in models)
+                ModelBox.Items.Add(new ComboBoxItem
+                {
+                    Content = m.Id,
+                    ToolTip = string.IsNullOrEmpty(m.Name) ? m.Id : m.Name,
+                });
+
+            if (models.Count == 0)
+            {
+                ModelBox.Text = current;
+                SetModelStatus("接口没有返回模型，请手动填写模型名称", error: true);
+                return false;
+            }
+
+            // 未选择模型时默认选第一个；已有选择则保留（即使不在列表中，也允许手动填写）
+            ModelBox.Text = current.Length > 0 ? current : models[0].Id;
+            bool inList = models.Any(m => string.Equals(m.Id, ModelBox.Text, StringComparison.Ordinal));
+            SetModelStatus(inList
+                ? $"已获取 {models.Count} 个模型：{string.Join("、", models.Select(m => m.Id))}"
+                : $"注意：当前模型“{ModelBox.Text}”不在接口返回的列表中（{string.Join("、", models.Select(m => m.Id))}）",
+                error: !inList);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (TranslationException ex)
+        {
+            SetModelStatus("获取模型列表失败：" + ex.Message, error: true);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            SetModelStatus("获取模型列表失败：" + ex.Message, error: true);
+            return false;
+        }
+        finally
+        {
+            RefreshModelsButton.IsEnabled = true;
+        }
+    }
+
+    private void SetModelStatus(string text, bool error)
+    {
+        ModelStatus.Text = text;
+        ModelStatus.Foreground = error ? System.Windows.Media.Brushes.Crimson : (System.Windows.Media.Brush)FindResource("SubtleBrush");
+    }
+
     // ---------------- 测试连接 ----------------
 
     private async void TestButton_Click(object sender, RoutedEventArgs e)
     {
         _testCts?.Cancel();
         _testCts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-        var s = BuildSettings();
         TestButton.IsEnabled = false;
         TestResult.Visibility = Visibility.Visible;
         TestResult.Foreground = (System.Windows.Media.Brush)FindResource("SubtleBrush");
         TestResult.Text = "正在测试…";
         try
         {
+            // 测试时顺便刷新模型列表；未选择模型时自动选第一个
+            bool fetched = await FetchModelsAsync(auto: false);
+            if (string.IsNullOrWhiteSpace(ModelBox.Text))
+            {
+                TestResult.Foreground = System.Windows.Media.Brushes.Crimson;
+                TestResult.Text = fetched ? "✗ 请先选择模型" : "✗ 无法获取模型列表，请检查 API Key / Base URL，或手动填写模型名称";
+                return;
+            }
+            var s = BuildSettings();
             using var client = new DeepSeekClient();
             var req = PromptBuilder.Build("Hello, world!", s);
             var sb = new System.Text.StringBuilder();
-            await foreach (var piece in client.TranslateStreamAsync(req, s, _testCts.Token))
-                sb.Append(piece);
+            await foreach (var chunk in client.TranslateStreamAsync(req, s, _testCts.Token))
+                if (!chunk.IsReasoning) sb.Append(chunk.Text);
             TestResult.Foreground = System.Windows.Media.Brushes.SeaGreen;
-            TestResult.Text = "✓ 连接成功：" + sb.ToString().Trim();
+            TestResult.Text = $"✓ 连接成功（{s.Model}）：" + sb.ToString().Trim();
         }
         catch (TranslationException ex)
         {
@@ -146,7 +259,7 @@ public partial class SettingsWindow : Window
     private void HotkeyBox_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         _host.SuspendHotkey(false);
-        HotkeyHint.Text = "点击输入框后按下新的组合键（需包含 Ctrl / Alt / Shift / Win 之一）";
+        HotkeyHint.Text = "可选。选中文字后按快捷键翻译（需包含 Ctrl / Alt / Shift / Win 之一）";
         HotkeyBox.Text = _hotkey.ToString();
     }
 

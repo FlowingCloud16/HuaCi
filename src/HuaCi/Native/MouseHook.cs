@@ -66,3 +66,45 @@ public sealed class MouseHook : IDisposable
 
     public void Dispose() => Uninstall();
 }
+
+/// <summary>低级键盘钩子：只用于"有按键就隐藏划词按钮"，不读取按键内容。</summary>
+public sealed class KeyboardHook : IDisposable
+{
+    private IntPtr _hook = IntPtr.Zero;
+    private readonly NativeMethods.LowLevelMouseProc _proc; // 签名与鼠标钩子相同
+
+    public event EventHandler? KeyDown;
+
+    public bool IsInstalled => _hook != IntPtr.Zero;
+
+    public KeyboardHook() => _proc = HookProc;
+
+    public bool Install()
+    {
+        if (IsInstalled) return true;
+        _hook = NativeMethods.SetWindowsHookEx(NativeMethods.WH_KEYBOARD_LL, _proc, NativeMethods.GetModuleHandle(null), 0);
+        return IsInstalled;
+    }
+
+    public void Uninstall()
+    {
+        if (!IsInstalled) return;
+        NativeMethods.UnhookWindowsHookEx(_hook);
+        _hook = IntPtr.Zero;
+    }
+
+    private IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            int msg = wParam.ToInt32();
+            if (msg is NativeMethods.WM_KEYDOWN or NativeMethods.WM_SYSKEYDOWN)
+            {
+                try { KeyDown?.Invoke(this, EventArgs.Empty); } catch { }
+            }
+        }
+        return NativeMethods.CallNextHookEx(_hook, nCode, wParam, lParam);
+    }
+
+    public void Dispose() => Uninstall();
+}

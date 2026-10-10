@@ -48,20 +48,45 @@ public partial class TranslationPopup : Window
     public void Reset(string source, TranslationRequest req, string model, bool expandSource)
     {
         var lang = req.SourceIsChinese ? "中文" : "自动检测";
+        if (req.AlreadyInTarget) lang = "中文";
         DirectionText.Text = $"{lang} → {req.TargetLanguage}" + (req.IsSingleWord ? "  ·  词典" : "");
         SourceExpander.Visibility = Visibility.Visible;
         SourceBox.Text = source;
         var firstLine = source.Trim().Split('\n')[0].Trim();
         SourceHeader.Text = "原文：" + (firstLine.Length > 40 ? firstLine[..40] + "…" : firstLine);
         SourceExpander.IsExpanded = expandSource;
-        FooterText.Text = $"DeepSeek · {model}";
+        SetModel(model);
 
         ResultBox.Text = "";
         ResultBox.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Collapsed;
         LoadingText.Visibility = Visibility.Visible;
         LoadingText.Text = "翻译中…";
+        _thinkingChars = 0;
         CopyButton.IsEnabled = false;
+    }
+
+    public void SetModel(string model) =>
+        FooterText.Text = string.IsNullOrWhiteSpace(model) ? "DeepSeek" : $"DeepSeek · {model}";
+
+    private int _thinkingChars;
+
+    /// <summary>收到 reasoning_content（思考过程）时显示进度，不计入译文。</summary>
+    public void ShowThinking(int addedChars)
+    {
+        if (ResultBox.Visibility == Visibility.Visible) return;
+        _thinkingChars += addedChars;
+        LoadingText.Text = $"思考中…（{_thinkingChars} 字）";
+    }
+
+    /// <summary>在结果区显示一条普通提示（灰色）。</summary>
+    public void ShowNotice(string message)
+    {
+        LoadingText.Visibility = Visibility.Visible;
+        LoadingText.Text = message;
+        LoadingText.TextWrapping = TextWrapping.Wrap;
+        ResultBox.Visibility = Visibility.Collapsed;
+        ErrorPanel.Visibility = Visibility.Collapsed;
     }
 
     public void AppendResult(string piece)

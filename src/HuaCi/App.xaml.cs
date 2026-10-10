@@ -58,13 +58,13 @@ public partial class App : Application, ISettingsHost
         _hotkeys.HotkeyPressed += (_, _) => _ = _controller.TranslateSelectionAsync();
 
         _selectIcon = new SelectIconWatcher(Dispatcher);
-        _selectIcon.IconClicked += (_, _) => _ = _controller.TranslateSelectionAsync();
+        _selectIcon.IconClicked += (_, _) => _ = _controller.TranslateSelectionAsync(silentIfEmpty: true);
 
         var s = _settings.Current;
-        string hotkeyText = RegisterHotkeyFromSettings(s, showError: true);
+        RegisterHotkeyFromSettings(s, showError: true);
         _selectIcon.SetEnabled(s.EnableSelectIcon);
         if (s.AutoStart) AutoStartService.RefreshPathIfEnabled();
-        _tray.UpdateState(hotkeyText, false);
+        _tray.UpdateState(DescribeTrigger(s), false);
 
         bool launchedByAutoStart = e.Args.Contains(AutoStartService.AutoStartArg);
         if (string.IsNullOrWhiteSpace(s.ApiKey))
@@ -74,7 +74,7 @@ public partial class App : Application, ISettingsHost
         }
         else if (!s.FirstRunTipShown || !launchedByAutoStart)
         {
-            _tray.ShowBalloon("划词翻译已在后台运行", $"选中任意文字后按 {hotkeyText} 即可翻译。右键托盘图标可打开设置。");
+            _tray.ShowBalloon("划词翻译已在后台运行", HowToUse(s) + "右键托盘图标可打开设置。");
         }
 
         if (!s.FirstRunTipShown)
@@ -85,16 +85,32 @@ public partial class App : Application, ISettingsHost
         }
     }
 
-    private string RegisterHotkeyFromSettings(AppSettings s, bool showError)
+    /// <summary>按设置注册快捷键；快捷键关闭时注销。</summary>
+    private void RegisterHotkeyFromSettings(AppSettings s, bool showError)
     {
+        if (!s.EnableHotkey)
+        {
+            _hotkeys!.Unregister();
+            return;
+        }
         if (!HotkeyGesture.TryParse(s.Hotkey, out var g)) g = HotkeyGesture.Default;
         if (!_hotkeys!.Register(g) && showError)
         {
             Log.Warn($"热键 {g} 注册失败");
             _tray?.ShowBalloon("快捷键注册失败", $"{g} 可能已被其他程序占用，请在设置中更换。", warning: true);
         }
-        return g.ToString();
     }
+
+    private static string HowToUse(AppSettings s)
+    {
+        var parts = new List<string>();
+        if (s.EnableSelectIcon) parts.Add("选中文字后点击旁边的「翻译」按钮");
+        if (s.EnableHotkey) parts.Add($"选中文字后按 {s.Hotkey}");
+        return parts.Count == 0 ? "划词按钮和快捷键都已关闭，可在设置中开启。" : string.Join("，或", parts) + "即可翻译。";
+    }
+
+    private static string DescribeTrigger(AppSettings s) =>
+        s.EnableHotkey ? (s.EnableSelectIcon ? $"划词 / {s.Hotkey}" : s.Hotkey) : (s.EnableSelectIcon ? "划词翻译已开启" : "触发方式已关闭");
 
     private void TranslateClipboard()
     {
@@ -128,7 +144,7 @@ public partial class App : Application, ISettingsHost
             RegisterHotkeyFromSettings(s, showError: true);
             _selectIcon?.SetEnabled(s.EnableSelectIcon);
         }
-        _tray?.UpdateState(s.Hotkey, paused);
+        _tray?.UpdateState(DescribeTrigger(s), paused);
     }
 
     private void OpenSettings()
@@ -159,11 +175,19 @@ public partial class App : Application, ISettingsHost
         error = null;
         if (!HotkeyGesture.TryParse(s.Hotkey, out var g))
         {
-            error = "快捷键无效。";
-            return false;
+            if (s.EnableHotkey)
+            {
+                error = "快捷键无效。";
+                return false;
+            }
+            g = HotkeyGesture.Default;
         }
 
-        if (!_paused)
+        if (!_paused && !s.EnableHotkey)
+        {
+            _hotkeys!.Unregister();
+        }
+        else if (!_paused)
         {
             if (!_hotkeys!.Register(g))
             {
@@ -185,7 +209,7 @@ public partial class App : Application, ISettingsHost
         }
 
         if (!_paused) _selectIcon?.SetEnabled(s.EnableSelectIcon);
-        _tray?.UpdateState(g.ToString(), _paused);
+        _tray?.UpdateState(DescribeTrigger(s), _paused);
         return true;
     }
 

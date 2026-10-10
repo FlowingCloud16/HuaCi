@@ -13,7 +13,7 @@
     <AssemblyName>HuaCi</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>划词翻译 HuaCi</Product>
     <Description>Windows 划词翻译工具（DeepSeek 引擎）</Description>
     <Copyright>FlowingCloud16</Copyright>
@@ -27,9 +27,8 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true' And '$(SelfContained)' == 'true'">
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-  </PropertyGroup>
+  <!-- 自带运行时版本不启用单文件内部压缩：exe 较大（约 140 MB）但启动更快，
+       且外层用 7z 压缩后反而更小（约 44 MB，单文件内部压缩后再打包约 59 MB） -->
 
   <!-- WPF 与 WinForms 同时启用时避免命名冲突，WinForms 只用于托盘图标 -->
   <ItemGroup>
